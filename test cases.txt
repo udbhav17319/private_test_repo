@@ -1,0 +1,13 @@
+Write me a Python script that calculates prime numbers up to 500 and prints them.
+
+
+Draft Python code for a function that reverses a linked list. Don’t execute it, just give me the code and then review it for improvements.
+
+
+Here’s my code, can you review it for performance and style?
+
+def factorial(n):
+    if n == 0:
+        return 1
+    else:
+        return n * factorial(n-1)
