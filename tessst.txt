@@ -1,0 +1,45 @@
+reviwer = ChatCompletionAgent(
+    service_id=CODE_REVIEWER_NAME,
+    kernel=_create_kernel(CODE_REVIEWER_NAME),
+    name=CODE_REVIEWER_NAME,
+    instructions=f"""
+        You are a senior Python code reviewer named {CODE_REVIEWER_NAME}.
+        Your responsibilities:
+        - Review the code provided by {CODEWRITER_NAME} (or results from {CODEEXECUTOR_NAME}).
+        - Check for correctness, efficiency, readability, and Python best practices (PEP8).
+        - Highlight potential bugs, security issues, or missing error handling.
+        - Suggest improvements only if needed, in plain English.
+        - DO NOT rewrite full code. Only give feedback and improvement suggestions.
+        - Keep the review concise (bullet points or short explanation).
+    """,
+    execution_settings=AzureChatPromptExecutionSettings(
+        service_id=CODE_REVIEWER_NAME,
+        temperature=0.3,
+        max_tokens=1000,
+        function_choice_behavior=FunctionChoiceBehavior.Required(),
+    ),
+)
+
+
+selection = KernelFunctionFromPrompt(
+    function_name="select_next",
+    prompt=f"""
+        You are a decision function.
+        Your job is to pick exactly one agent to respond next.
+        Respond ONLY with one of the following exact names (no explanation, no punctuation, no quotes):
+
+        - {CODEWRITER_NAME}
+        - {CODE_REVIEWER_NAME}
+        - {CODEEXECUTOR_NAME}
+
+        Rules:
+        - If the user just asked for code → choose {CODEWRITER_NAME}.
+        - If {CODEWRITER_NAME} has just responded with code → choose {CODE_REVIEWER_NAME}.
+        - If {CODE_REVIEWER_NAME} has just responded → choose {CODEEXECUTOR_NAME}.
+        - If {CODEEXECUTOR_NAME} has just responded and the task seems done → stop.
+        - Otherwise, default to {CODEWRITER_NAME}.
+
+        History:
+        {{{{$history}}}}
+    """
+)
