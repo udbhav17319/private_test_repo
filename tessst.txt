@@ -43,3 +43,10 @@ selection = KernelFunctionFromPrompt(
         {{{{$history}}}}
     """
 )
+
+
+- If the user explicitly asks for code to be written → choose {CODEWRITER_NAME}.
+        - If the user explicitly asks to execute code → choose {CODEEXECUTOR_NAME}.
+        - If the user explicitly asks for code review / feedback / analysis → choose {CODE_REVIEWER_NAME}.
+        - Do NOT call any other agent automatically.
+        - Return ONLY the exact agent name (no explanations, punctuation, or quotes).
