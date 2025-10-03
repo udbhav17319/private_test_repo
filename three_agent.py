@@ -1,11 +1,6 @@
 import asyncio
-import datetime
-import os
 import dotenv
 import logging
-
-from azure.core.exceptions import ClientAuthenticationError
-from azure.identity import DefaultAzureCredential
 from semantic_kernel import Kernel
 from semantic_kernel.agents import AgentGroupChat, ChatCompletionAgent
 from semantic_kernel.agents.strategies.selection.kernel_function_selection_strategy import KernelFunctionSelectionStrategy
@@ -25,15 +20,13 @@ dotenv.load_dotenv()
 # Azure OpenAI Config
 azure_openai_endpoint = "https://eyq-incubator.america.fabric.ey.com/eyq/us/api/"
 azure_openai_api_key = ""
-#azure_openai_api_version = "gpt-4o-mini-2024-07-18"
 azure_openai_deployment = "gpt-4o"
 
 CODEWRITER_NAME = "CodeWriter"
 CODEEXECUTOR_NAME = "CodeExecutor"
-CODE_REVIEWER_NAME= "CodeReviewer"
+CODE_REVIEWER_NAME = "CodeReviewer"
 TERMINATION_KEYWORD = "yes"
 
-# Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 def _create_kernel(service_id: str) -> Kernel:
@@ -44,7 +37,6 @@ def _create_kernel(service_id: str) -> Kernel:
             endpoint=azure_openai_endpoint,
             deployment_name=azure_openai_deployment,
             api_key=azure_openai_api_key,
-            #api_version=azure_openai_api_version,
         )
     )
     kernel.add_plugin(plugin_name="LocalCodeExecutionTool", plugin=LocalPythonPlugin())
@@ -61,21 +53,29 @@ def safe_result_parser(result):
         return CODEEXECUTOR_NAME
     if "codewriter" in name:
         return CODEWRITER_NAME  
-    if "CodeReviewer" in name:
+    if "codereviewer" in name:
         return CODE_REVIEWER_NAME
-    return None 
+    return None
+
+def termination_parser(result):
+    if not result.value:
+        return False
+    val = result.value
+    if isinstance(val,list) and val:
+        val=val[0]
+    return TERMINATION_KEYWORD.lower() in str(val).lower()
 
 async def main():
+    # Create agents
     writer = ChatCompletionAgent(
         service_id=CODEWRITER_NAME,
         kernel=_create_kernel(CODEWRITER_NAME),
         name=CODEWRITER_NAME,
         instructions=f"""
             You are a highly skilled Python developer named {CODEWRITER_NAME}.
-            Your job is to write clean, working Python code based on user requests.
-            - Return only code, no explanations, no markdown, no extra text.
-            - If external libraries are needed (like pygame), add pip install lines using subprocess.
-            - Let the executor handle running the code. Do not run it yourself.
+            - Write clean Python code based on user requests.
+            - Return only code, no explanations.
+            - Let the executor handle running the code.
         """,
         execution_settings=AzureChatPromptExecutionSettings(
             service_id=CODEWRITER_NAME,
@@ -91,11 +91,9 @@ async def main():
         name=CODEEXECUTOR_NAME,
         instructions=f"""
             You are an execution agent named {CODEEXECUTOR_NAME}.
-            - You run Python code and return output, errors, or results.
-            - If a library is missing, install it using subprocess/pip.
-            - If the code is GUI-based (pygame/tkinter), run it and wait for the window to close.
-            - Respond in plain English summarizing the result. Do not invent outputs.
-            - Do not explain code. Only report what actually happened.
+            - Run Python code and return output or errors.
+            - If a library is missing, install it.
+            - Respond in plain English summarizing the result.
         """,
         execution_settings=AzureChatPromptExecutionSettings(
             service_id=CODEEXECUTOR_NAME,
@@ -107,78 +105,80 @@ async def main():
         ),
     )
 
-    reviwer = ChatCompletionAgent(
+    reviewer = ChatCompletionAgent(
         service_id=CODE_REVIEWER_NAME,
         kernel=_create_kernel(CODE_REVIEWER_NAME),
         name=CODE_REVIEWER_NAME,
         instructions=f"""
-            You are an code reviewer agent named {CODE_REVIEWER_NAME}.
-            - Your task is to review the code and give feedback based on that.
-            - If the code is GUI-based (pygame/tkinter), run it and wait for the window to close.
-            - Respond in plain English summarizing the result. Do not invent outputs.
-            - Do not explain code. Only report what actually happened.
-            """,
+            You are a senior Python code reviewer named {CODE_REVIEWER_NAME}.
+            - Review code for correctness, readability, performance, and best practices.
+            - Suggest improvements concisely.
+            - Do not execute code unless explicitly asked.
+        """,
         execution_settings=AzureChatPromptExecutionSettings(
             service_id=CODE_REVIEWER_NAME,
-            temperature=0.2,
-            max_tokens=1500,
+            temperature=0.3,
+            max_tokens=1000,
             function_choice_behavior=FunctionChoiceBehavior.Required(),
         ),
     )
-    # Selection strategy
+
+    # Selection strategy based strictly on user request
     selection = KernelFunctionFromPrompt(
         function_name="select_next",
         prompt=f"""
-            YOU are a decision function.
-            Your job is to pick exactly one agent to respond next.
-            Respond ONLY with one of the following exact names (no explationatio, no punctuation, no quotes):
-
+            You are a decision function.
+            Pick exactly one agent to respond next based ONLY on the user's request.
+            Valid names:
             - {CODEWRITER_NAME}
             - {CODEEXECUTOR_NAME}
             - {CODE_REVIEWER_NAME}
 
             Rules:
+            - If the user asks for code → {CODEWRITER_NAME}.
+            - If the user asks to execute code → {CODEEXECUTOR_NAME}.
+            - If the user asks for review/feedback → {CODE_REVIEWER_NAME}.
+            - Do NOT call other agents automatically.
+            - Return ONLY the exact agent name (no quotes, punctuation, or extra text).
 
-            Return only the name. No other text.
-
-            History:
-            {{{{$history}}}}
-            """
+            User request:
+            {{{{$user_input}}}}
+        """
     )
 
+    # Termination based on fulfilling user request
     termination = KernelFunctionFromPrompt(
         function_name="check_done",
         prompt=f"""
-            Does the last message from {CODEEXECUTOR_NAME} indicate the task is complete?
-
+            Determine if the user's request has been fully completed.
             Say only "{TERMINATION_KEYWORD}" if:
-            - The output shows the code has been executed.
-            - Or, a GUI/game was launched (e.g., pygame).
-            - Or, there are no follow-up steps mentioned.
+            - The user asked for code and {CODEWRITER_NAME} responded
+            - The user asked to execute code and {CODEEXECUTOR_NAME} responded
+            - The user asked for review and {CODE_REVIEWER_NAME} responded
+            Otherwise, respond with anything else.
 
-            Say anything else otherwise.
+            User request:
+            {{{{$user_input}}}}
 
-            History:
+            Conversation history:
             {{{{$history}}}}
-            """
-
+        """
     )
 
     chat = AgentGroupChat(
-        agents=[writer, executor,reviwer],
+        agents=[writer, executor, reviewer],
         selection_strategy=KernelFunctionSelectionStrategy(
             function=selection,
             kernel=_create_kernel("selector"),
-            #result_parser=lambda r: str(r.value[0]) if r.value else CODEWRITER_NAME,
             result_parser=safe_result_parser,
             agent_variable_name="agents",
             history_variable_name="history",
         ),
         termination_strategy=KernelFunctionTerminationStrategy(
-            agents=[executor],
+            agents=[writer, executor, reviewer],
             function=termination,
             kernel=_create_kernel("terminator"),
-            result_parser=lambda r: TERMINATION_KEYWORD in str(r.value[0]).lower(),
+            result_parser=termination_parser,
             history_variable_name="history",
             maximum_iterations=10,
         ),
@@ -200,15 +200,9 @@ async def main():
 
         async for response in chat.invoke():
             print(f"\n🤖 {response.name}:\n{response.content}\n")
-        
-        # ✅ ADD this fix after the response is received
-        if response.name == CODEEXECUTOR_NAME:
-            print("✅ Task complete (executor finished).")
-            break
 
         if chat.is_complete:
-            print("✅ Task complete.")
-            break
+            print("✅ Task complete.\n")
 
 if __name__ == "__main__":
     asyncio.run(main())
