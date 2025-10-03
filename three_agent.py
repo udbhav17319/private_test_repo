@@ -12,7 +12,7 @@ from semantic_kernel.contents.chat_message_content import ChatMessageContent
 from semantic_kernel.contents.utils.author_role import AuthorRole
 from semantic_kernel.functions.kernel_function_from_prompt import KernelFunctionFromPrompt
 
-from local_python_plugin3 import LocalPythonPlugin  # Plugin for code execution
+from local_python_plugin3 import LocalPythonPlugin  # Your local code execution plugin
 
 # Load .env
 dotenv.load_dotenv()
@@ -66,7 +66,7 @@ def termination_parser(result):
     return TERMINATION_KEYWORD.lower() in str(val).lower()
 
 async def main():
-    # Create agents
+    # --- Agents ---
     writer = ChatCompletionAgent(
         service_id=CODEWRITER_NAME,
         kernel=_create_kernel(CODEWRITER_NAME),
@@ -91,9 +91,9 @@ async def main():
         name=CODEEXECUTOR_NAME,
         instructions=f"""
             You are an execution agent named {CODEEXECUTOR_NAME}.
-            - Run Python code and return output or errors.
+            - Run Python code and return output/errors.
             - If a library is missing, install it.
-            - Respond in plain English summarizing the result.
+            - Respond in plain English summarizing results.
         """,
         execution_settings=AzureChatPromptExecutionSettings(
             service_id=CODEEXECUTOR_NAME,
@@ -123,12 +123,12 @@ async def main():
         ),
     )
 
-    # Selection strategy based strictly on user request
+    # --- Selection strategy based on history ---
     selection = KernelFunctionFromPrompt(
         function_name="select_next",
         prompt=f"""
             You are a decision function.
-            Pick exactly one agent to respond next based ONLY on the user's request.
+            Pick exactly one agent based ONLY on the user's last message in history.
             Valid names:
             - {CODEWRITER_NAME}
             - {CODEEXECUTOR_NAME}
@@ -137,34 +137,31 @@ async def main():
             Rules:
             - If the user asks for code → {CODEWRITER_NAME}.
             - If the user asks to execute code → {CODEEXECUTOR_NAME}.
-            - If the user asks for review/feedback → {CODE_REVIEWER_NAME}.
-            - Do NOT call other agents automatically.
-            - Return ONLY the exact agent name (no quotes, punctuation, or extra text).
-
-            User request:
-            {{{{$user_input}}}}
-        """
-    )
-
-    # Termination based on fulfilling user request
-    termination = KernelFunctionFromPrompt(
-        function_name="check_done",
-        prompt=f"""
-            Determine if the user's request has been fully completed.
-            Say only "{TERMINATION_KEYWORD}" if:
-            - The user asked for code and {CODEWRITER_NAME} responded
-            - The user asked to execute code and {CODEEXECUTOR_NAME} responded
-            - The user asked for review and {CODE_REVIEWER_NAME} responded
-            Otherwise, respond with anything else.
-
-            User request:
-            {{{{$user_input}}}}
+            - If the user asks for review → {CODE_REVIEWER_NAME}.
+            - Return ONLY the agent name, no extra text.
 
             Conversation history:
             {{{{$history}}}}
         """
     )
 
+    # --- Termination strategy based on history ---
+    termination = KernelFunctionFromPrompt(
+        function_name="check_done",
+        prompt=f"""
+            Determine if the user's request has been fully completed.
+            Say only "{TERMINATION_KEYWORD}" if:
+            - The user asked for code and {CODEWRITER_NAME} has responded
+            - The user asked to execute code and {CODEEXECUTOR_NAME} has responded
+            - The user asked for review and {CODE_REVIEWER_NAME} has responded
+            Otherwise, respond with anything else.
+
+            Conversation history:
+            {{{{$history}}}}
+        """
+    )
+
+    # --- Multi-agent chat ---
     chat = AgentGroupChat(
         agents=[writer, executor, reviewer],
         selection_strategy=KernelFunctionSelectionStrategy(
@@ -196,8 +193,10 @@ async def main():
             print("🔁 Conversation reset.\n")
             continue
 
+        # Add user message
         await chat.add_chat_message(ChatMessageContent(role=AuthorRole.USER, content=user_input))
 
+        # Invoke agents
         async for response in chat.invoke():
             print(f"\n🤖 {response.name}:\n{response.content}\n")
 
