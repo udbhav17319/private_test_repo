@@ -1,3 +1,18 @@
+# Docs for the Azure Web Apps Deploy action: https://github.com/azure/functions-action
+# More GitHub Actions for Azure: https://github.com/Azure/actions
+
+name: Build and Deploy Node.js Project to Azure Function App - agentic-api-testing
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  AZURE_FUNCTIONAPP_PACKAGE_PATH: '.' # path to your Azure Function project
+  NODE_VERSION: '20' # latest stable Node.js version
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -5,24 +20,34 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v3
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - run: |
+      - name: Install dependencies, build, and test
+        run: |
           pushd ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
           npm install
           npm run build --if-present
           npm run test --if-present
           popd
 
-      - run: |
+      - name: List project contents
+        run: |
+          cd ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
+          ls -la
+
+      - name: Zip artifact for deployment
+        run: |
           cd ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
           zip -r release.zip .
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload artifact for deployment
+        uses: actions/upload-artifact@v4
         with:
           name: node-app
           path: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}/release.zip
@@ -32,7 +57,8 @@ jobs:
     needs: build
 
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download artifact from build job
+        uses: actions/download-artifact@v4
         with:
           name: node-app
           path: downloaded-artifact
