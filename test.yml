@@ -1,54 +1,28 @@
-# Docs for the Azure Web Apps Deploy action: https://github.com/azure/functions-action
-# More GitHub Actions for Azure: https://github.com/Azure/actions
-
-name: Build and deploy Node.js project to Azure Function App - agentic-api-testing
-
-on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
-
-env:
-  AZURE_FUNCTIONAPP_PACKAGE_PATH: '.' # set this to the path to your web app project, defaults to the repository root
-  NODE_VERSION: '20' # updated to latest stable Node version
-
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read #This is required for actions/checkout
+      contents: read
 
     steps:
-      - name: 'Checkout GitHub Action'
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node ${{ env.NODE_VERSION }} Environment
-        uses: actions/setup-node@v3
+      - uses: actions/setup-node@v3
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: 'Resolve Project Dependencies Using Npm'
-        shell: bash
-        run: |
+      - run: |
           pushd ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
           npm install
           npm run build --if-present
           npm run test --if-present
           popd
 
-      - name: List contents before zipping
-        run: |
-          cd ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
-          ls -la
-
-      - name: Zip artifact for deployment
-        run: |
+      - run: |
           cd ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
           zip -r release.zip .
 
-      - name: Upload artifact for deployment job
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: node-app
           path: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}/release.zip
@@ -58,23 +32,16 @@ jobs:
     needs: build
 
     steps:
-      - name: Download artifact from build job
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: node-app
+          path: downloaded-artifact
 
-      - name: Unzip artifact for deployment
-        run: |
-          cd node-app
-          unzip release.zip
-          rm release.zip
-
-      - name: 'Run Azure Functions Action'
+      - name: Deploy to Azure Function
         uses: Azure/functions-action@v1
-        id: fa
         with:
           app-name: 'agentic-api-testing'
           slot-name: 'Production'
-          package: './node-app' # folder containing unzipped artifact
+          package: './downloaded-artifact/release.zip'
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_8F70F92294584A73B1565A1BA3313638 }}
           sku: 'flexconsumption'
