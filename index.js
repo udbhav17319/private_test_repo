@@ -1,88 +1,81 @@
-const https = require('https');
+const fs = require("fs");
+const path = require("path");
+const multiparty = require("multiparty");
+const axios = require("axios");
 
 module.exports = async function (context, req) {
-    context.log('LLM Translation API triggered.');
-
     try {
-        let textToTranslate = '';
-        let targetLanguage = 'en'; // default
-
-        // Handling text input
-        if (req.body && req.body.text) {
-            textToTranslate = req.body.text;
-        } 
-        // Handling file input (base64-encoded text file)
-        else if (req.body && req.body.file) {
-            const fileBuffer = Buffer.from(req.body.file, 'base64');
-            textToTranslate = fileBuffer.toString('utf8');
-        } else {
-            context.res = { status: 400, body: 'Provide text or file in request body.' };
+        if (req.method === "GET") {
+            // Serve HTML page
+            const filePath = path.join(__dirname, "..", "static", "index.html");
+            const html = fs.readFileSync(filePath, "utf8");
+            context.res = {
+                status: 200,
+                headers: { "Content-Type": "text/html" },
+                body: html
+            };
             return;
         }
 
-        // Override target language if provided in body
-        if (req.body && req.body.lang) {
-            targetLanguage = req.body.lang;
-        }
-
-        // Prepare request to Azure OpenAI
-        const apiKey = process.env.OPENAI_KEY;
-        const endpoint = process.env.OPENAI_ENDPOINT; // full completions endpoint
-        const deployment = process.env.OPENAI_DEPLOYMENT;
-
-        const body = JSON.stringify({
-            model: deployment,
-            prompt: `Translate the following text to ${targetLanguage}:\n\n${textToTranslate}`,
-            max_tokens: 1000,
-            temperature: 0
+        // Handle POST (text or file)
+        const form = new multiparty.Form();
+        const data = await new Promise((resolve, reject) => {
+            form.parse(req, (err, fields, files) => {
+                if (err) reject(err);
+                else resolve({ fields, files });
+            });
         });
 
-        const options = {
-            method: 'POST',
+        let promptText = "";
+
+        // If file uploaded, read content
+        if (data.files && data.files.file && data.files.file[0]) {
+            const fileContent = fs.readFileSync(data.files.file[0].path, "utf8");
+            promptText += fileContent;
+        }
+
+        // If text provided
+        if (data.fields && data.fields.text) {
+            promptText += (promptText ? "\n" : "") + data.fields.text[0];
+        }
+
+        if (!promptText) {
+            context.res = {
+                status: 400,
+                headers: { "Content-Type": "application/json" },
+                body: { error: "No file or text provided." }
+            };
+            return;
+        }
+
+        // Call Azure OpenAI Completion Endpoint
+        const endpoint = `${process.env.AZURE_OPENAI_ENDPOINT}openai/deployments/${process.env.AZURE_OPENAI_DEPLOYMENT}/completions?api-version=2023-07-01-preview`;
+
+        const response = await axios.post(endpoint, {
+            prompt: `Translate this text to French:\n${promptText}`,
+            max_tokens: 500,
+            temperature: 0.7
+        }, {
             headers: {
-                'Content-Type': 'application/json',
-                'api-key': apiKey,
-                'Content-Length': Buffer.byteLength(body)
+                "api-key": process.env.AZURE_OPENAI_KEY,
+                "Content-Type": "application/json"
             }
-        };
-
-        const translation = await new Promise((resolve, reject) => {
-            const reqApi = https.request(endpoint, options, (res) => {
-                let data = '';
-
-                res.on('data', chunk => data += chunk);
-                res.on('end', () => {
-                    if (res.statusCode >= 200 && res.statusCode < 300) {
-                        try {
-                            const json = JSON.parse(data);
-                            if (json.choices && json.choices.length > 0) {
-                                resolve(json.choices[0].text.trim());
-                            } else {
-                                reject(new Error('No choices returned from LLM.'));
-                            }
-                        } catch (err) {
-                            reject(new Error(`Invalid JSON response: ${data}`));
-                        }
-                    } else {
-                        reject(new Error(`HTTP ${res.statusCode}: ${data}`));
-                    }
-                });
-            });
-
-            reqApi.on('error', reject);
-            reqApi.write(body);
-            reqApi.end();
         });
 
         context.res = {
             status: 200,
-            body: { translation }
+            headers: { "Content-Type": "application/json" },
+            body: {
+                prompt: promptText,
+                translation: response.data.choices[0].text
+            }
         };
 
-    } catch (error) {
+    } catch (err) {
         context.res = {
             status: 500,
-            body: { error: error.message }
+            headers: { "Content-Type": "application/json" },
+            body: { error: err.message }
         };
     }
 };
