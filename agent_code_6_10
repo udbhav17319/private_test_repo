@@ -25,6 +25,7 @@ azure_openai_deployment = "gpt-4o"
 CODEWRITER_NAME = "CodeWriter"
 CODEEXECUTOR_NAME = "CodeExecutor"
 CODE_REVIEWER_NAME = "CodeReviewer"
+APIBUILDER_NAME = "APIBUILDER"
 TERMINATION_KEYWORD = "yes"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -46,23 +47,25 @@ def safe_result_parser(result):
     if not result.value:
         return None
     val = result.value
-    if isinstance(val,list) and val:
-        val=val[0]
-    name=str(val).strip().lower()
+    if isinstance(val, list) and val:
+        val = val[0]
+    name = str(val).strip().lower()
     if "codeexecutor" in name:
         return CODEEXECUTOR_NAME
     if "codewriter" in name:
-        return CODEWRITER_NAME  
+        return CODEWRITER_NAME
     if "codereviewer" in name:
         return CODE_REVIEWER_NAME
+    if "apibuilder" in name:
+        return APIBUILDER_NAME
     return None
 
 def termination_parser(result):
     if not result.value:
         return False
     val = result.value
-    if isinstance(val,list) and val:
-        val=val[0]
+    if isinstance(val, list) and val:
+        val = val[0]
     return TERMINATION_KEYWORD.lower() in str(val).lower()
 
 async def main():
@@ -123,7 +126,28 @@ async def main():
         ),
     )
 
-    # --- Selection strategy based on history ---
+    apibuilder = ChatCompletionAgent(
+    service_id=APIBUILDER_NAME,
+    kernel=_create_kernel(APIBUILDER_NAME),
+    name=APIBUILDER_NAME,
+    instructions=f"""
+        You are {APIBUILDER_NAME}, an expert in building REST APIs as Azure Functions in Node.js.
+        - Based on user request, generate a complete deployable Azure Function app in Node.js (index.js + function.json).
+        - Support both text and file inputs (multipart/form-data).
+        - Example: a Translation API that accepts plain text or a text file upload and returns translated text.
+        - Use Node.js Azure Functions v4+ runtime style (exports.default = async function...).
+        - Ensure function.json is valid with proper HTTP trigger + response bindings.
+        - Return ONLY code files (index.js and function.json), no explanations.
+    """,
+    execution_settings=AzureChatPromptExecutionSettings(
+        service_id=APIBUILDER_NAME,
+        temperature=0.1,
+        max_tokens=2000,
+        function_choice_behavior=FunctionChoiceBehavior.NoneInvoke(),
+    ),
+)
+
+    # --- Selection strategy ---
     selection = KernelFunctionFromPrompt(
         function_name="select_next",
         prompt=f"""
@@ -133,11 +157,13 @@ async def main():
             - {CODEWRITER_NAME}
             - {CODEEXECUTOR_NAME}
             - {CODE_REVIEWER_NAME}
+            - {APIBUILDER_NAME}
 
             Rules:
             - If the user asks for code → {CODEWRITER_NAME}.
             - If the user asks to execute code → {CODEEXECUTOR_NAME}.
             - If the user asks for review → {CODE_REVIEWER_NAME}.
+            - If the user asks to build an API (e.g., Azure Function, REST API) → {APIBUILDER_NAME}.
             - Return ONLY the agent name, no extra text.
 
             Conversation history:
@@ -145,15 +171,13 @@ async def main():
         """
     )
 
-    # --- Termination strategy based on history ---
+    # --- Termination strategy ---
     termination = KernelFunctionFromPrompt(
         function_name="check_done",
         prompt=f"""
             Determine if the user's request has been fully completed.
             Say only "{TERMINATION_KEYWORD}" if:
-            - The user asked for code and {CODEWRITER_NAME} has responded
-            - The user asked to execute code and {CODEEXECUTOR_NAME} has responded
-            - The user asked for review and {CODE_REVIEWER_NAME} has responded
+            - The correct agent has responded once with output/code.
             Otherwise, respond with anything else.
 
             Conversation history:
@@ -163,7 +187,7 @@ async def main():
 
     # --- Multi-agent chat ---
     chat = AgentGroupChat(
-        agents=[writer, executor, reviewer],
+        agents=[writer, executor, reviewer, apibuilder],
         selection_strategy=KernelFunctionSelectionStrategy(
             function=selection,
             kernel=_create_kernel("selector"),
@@ -172,7 +196,7 @@ async def main():
             history_variable_name="history",
         ),
         termination_strategy=KernelFunctionTerminationStrategy(
-            agents=[writer, executor, reviewer],
+            agents=[writer, executor, reviewer, apibuilder],
             function=termination,
             kernel=_create_kernel("terminator"),
             result_parser=termination_parser,
@@ -181,7 +205,7 @@ async def main():
         ),
     )
 
-    print("🎯 Multi-Agent Assistant Ready. Type your request below:")
+    print("🎯 Multi-Agent Assistant Ready with API Builder. Type your request below:")
     print("Type `exit` to quit or `reset` to restart.\n")
 
     while True:
