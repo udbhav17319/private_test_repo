@@ -8,3 +8,24 @@ const triggerName = 'translationAPI_4b7d';
 
 app.http(triggerName, {
     methods: ['POST'],
+
+
+def extract_trigger_name(js_code: str) -> str | None:
+    # 1. Try direct trigger pattern
+    direct_pattern = r"app\.http\s*\(\s*['\"]([\w\-]+)['\"]"
+    match = re.search(direct_pattern, js_code)
+    if match:
+        return match.group(1)
+
+    # 2. Try variable reference pattern
+    var_ref_pattern = r"app\.http\s*\(\s*([\w\-]+)\s*,"
+    match = re.search(var_ref_pattern, js_code)
+    if match:
+        var_name = match.group(1)
+        # Find variable assignment for that variable name
+        var_assign_pattern = rf"(?:const|let|var)\s+{re.escape(var_name)}\s*=\s*['\"]([\w\-]+)['\"]"
+        assign_match = re.search(var_assign_pattern, js_code)
+        if assign_match:
+            return assign_match.group(1)
+
+    return None
