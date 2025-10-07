@@ -1,1 +1,10 @@
-dsgsd
+def extract_trigger_name(js_code: str) -> str | None:
+    # Use raw string and double backslashes only where needed
+    pattern = r"app\.http\s*\(\s*['\"]([\w\-]+)['\"]"
+    match = re.search(pattern, js_code)
+    return match.group(1) if match else None
+
+const triggerName = 'translationAPI_4b7d';
+
+app.http(triggerName, {
+    methods: ['POST'],
