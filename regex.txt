@@ -29,3 +29,17 @@ def extract_trigger_name(js_code: str) -> str | None:
             return assign_match.group(1)
 
     return None
+
+
+
+- The function should:
+                Be an HTTP-triggered function
+                Accept both GET and POST requests
+                Return a greeting message using the name
+                Use app.http() syntax from @azure/functions
+                Include logging using context.log
+                The trigger name in app.http() must be hardcoded and unique every time the code is generated.
+                You must generate a random number or hex string yourself and append it to the base name like 'translationAPI_XXXX'.
+                Do not use crypto, Math.random(), or any runtime logic to generate the name.
+                The name must be a static string like 'translationAPI_9283' or 'translationAPI_a1f3' and must be different every time the code is generated.
+            
