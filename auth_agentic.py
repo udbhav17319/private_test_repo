@@ -187,13 +187,5 @@ if __name__ == "__main__":
     asyncio.run(main())
 
 
- AzureChatCompletion(
-    ~~~~~~~~~~~~~~~~~~~^
-        service_id=service_id,
-        ^^^^^^^^^^^^^^^^^^^^^^
-    ...<3 lines>...
-        headers={"Authorization": f"Bearer {bearer_token}"},  # ensure auth header set
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    )
-    ^
-TypeError: AzureChatCompletion.__init__() got an unexpected keyword argument 'headers'
+{  "user_id": "",  "prompt_text": "Hi",  "chat_type": "New-Chat",  "conversation_id": "",  "current_msg_parent_id": "",  "current_msg_id": "",  "conversation_type": "default",  "ai_config_key": "AI_GPT4o_Config",  "files": [    "string"  ],  "image": false,  "bing_search": false}
+
