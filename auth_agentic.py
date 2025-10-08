@@ -185,3 +185,15 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+ AzureChatCompletion(
+    ~~~~~~~~~~~~~~~~~~~^
+        service_id=service_id,
+        ^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        headers={"Authorization": f"Bearer {bearer_token}"},  # ensure auth header set
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+TypeError: AzureChatCompletion.__init__() got an unexpected keyword argument 'headers'
