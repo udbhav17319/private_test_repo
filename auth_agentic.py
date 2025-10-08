@@ -1,3 +1,9 @@
+line 33, in <module>
+    class CustomChatCompletion(IChatCompletion):
+                               ^^^^^^^^^^^^^^^
+NameError: name 'IChatCompletion' is not defined. Did you mean: 'ChatCompletionAgent'?
+
+
 import asyncio
 import dotenv
 import logging
