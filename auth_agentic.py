@@ -1,3 +1,13 @@
+line 922, in __setattr__
+    self.__pydantic_validator__.validate_assignment(self, name, value)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+pydantic_core._pydantic_core.ValidationError: 1 validation error for CustomChatCompletion
+endpoint
+  Object has no attribute 'endpoint' [type=no_such_attribute, input_value='https://etiasandboxapp.a...at/generate_ai_response', input_type=str]
+    For further information visit https://errors.pydantic.dev/2.10/v/no_such_attribute
+
+
+
 import asyncio
 import dotenv
 import logging
