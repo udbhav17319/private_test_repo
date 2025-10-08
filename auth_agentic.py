@@ -226,3 +226,19 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+
+raise KernelServiceNotFoundError("No service found.")
+semantic_kernel.exceptions.kernel_exceptions.KernelServiceNotFoundError: No service found.
+2025-10-08 17:16:31,651 - ERROR - Failed to select agent: Agent Failure - Strategy failed to execute function.
+Traceback (most recent call last):
+    selected_service: tuple["AIServiceClientBase", PromptExecutionSettings] = context.kernel.select_ai_service(
+                                                                              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        function=self, arguments=context.arguments
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+
+     line 142, in invoke
+    raise AgentChatException("Failed to select agent") from ex
+semantic_kernel.exceptions.agent_exceptions.AgentChatException: Failed to select agent
