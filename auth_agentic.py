@@ -1,3 +1,9 @@
+
+
+line 142, in invoke
+    raise AgentChatException("Failed to select agent") from ex
+semantic_kernel.exceptions.agent_exceptions.AgentChatException: Failed to select agent
+
 import asyncio
 import dotenv
 import logging
