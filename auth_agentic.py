@@ -1,4 +1,3 @@
-
 import asyncio
 import dotenv
 import logging
@@ -13,14 +12,14 @@ from semantic_kernel.contents.chat_message_content import ChatMessageContent
 from semantic_kernel.contents.utils.author_role import AuthorRole
 from semantic_kernel.functions.kernel_function_from_prompt import KernelFunctionFromPrompt
 
-from local_python_plugin3 import LocalPythonPlugin  # Your local code execution plugin
+from local_python_plugin3 import LocalPythonPlugin  # your local code executor
 
-# Load .env
+# Load environment
 dotenv.load_dotenv()
 
-# Azure OpenAI Config
+# Azure OpenAI Config (Bearer-token-based)
 azure_openai_endpoint = "https://etiasandboxapp.azurewebsites.net/engine/api/chat/generate_ai_response"
-bearer_token=""
+bearer_token = "YOUR_BEARER_TOKEN_HERE"  # replace or load via env var
 azure_openai_deployment = "gpt-4o"
 
 CODEWRITER_NAME = "CodeWriter"
@@ -29,18 +28,22 @@ TERMINATION_KEYWORD = "yes"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+
 def _create_kernel(service_id: str) -> Kernel:
     kernel = Kernel()
+    # Add Azure Chat Completion with Bearer token auth
     kernel.add_service(
         AzureChatCompletion(
             service_id=service_id,
             endpoint=azure_openai_endpoint,
             deployment_name=azure_openai_deployment,
-            api_key=azure_openai_api_key,
+            api_key=bearer_token,  # bearer token passed here
+            headers={"Authorization": f"Bearer {bearer_token}"},  # ensure auth header set
         )
     )
     kernel.add_plugin(plugin_name="LocalCodeExecutionTool", plugin=LocalPythonPlugin())
     return kernel
+
 
 def safe_result_parser(result):
     if not result.value:
@@ -55,6 +58,7 @@ def safe_result_parser(result):
         return CODE_REVIEWER_NAME
     return None
 
+
 def termination_parser(result):
     if not result.value:
         return False
@@ -62,6 +66,7 @@ def termination_parser(result):
     if isinstance(val, list) and val:
         val = val[0]
     return TERMINATION_KEYWORD.lower() in str(val).lower()
+
 
 async def main():
     # --- Agents ---
@@ -83,7 +88,6 @@ async def main():
         ),
     )
 
-
     reviewer = ChatCompletionAgent(
         service_id=CODE_REVIEWER_NAME,
         kernel=_create_kernel(CODE_REVIEWER_NAME),
@@ -102,8 +106,6 @@ async def main():
         ),
     )
 
-    
-
     # --- Selection strategy ---
     selection = KernelFunctionFromPrompt(
         function_name="select_next",
@@ -113,7 +115,6 @@ async def main():
             Valid names:
             - {CODEWRITER_NAME}
             - {CODE_REVIEWER_NAME}
-            
 
             Rules:
             - If the user asks for code → {CODEWRITER_NAME}.
@@ -122,7 +123,7 @@ async def main():
 
             Conversation history:
             {{{{$history}}}}
-        """
+        """,
     )
 
     # --- Termination strategy ---
@@ -136,7 +137,7 @@ async def main():
 
             Conversation history:
             {{{{$history}}}}
-        """
+        """,
     )
 
     # --- Multi-agent chat ---
@@ -150,7 +151,7 @@ async def main():
             history_variable_name="history",
         ),
         termination_strategy=KernelFunctionTerminationStrategy(
-            agents=[writer, executor, reviewer, apibuilder],
+            agents=[writer, reviewer],
             function=termination,
             kernel=_create_kernel("terminator"),
             result_parser=termination_parser,
@@ -159,7 +160,7 @@ async def main():
         ),
     )
 
-    print("🎯 Multi-Agent Assistant Ready with API Builder. Type your request below:")
+    print("🎯 Multi-Agent Assistant Ready. Type your request below:")
     print("Type `exit` to quit or `reset` to restart.\n")
 
     while True:
@@ -180,6 +181,7 @@ async def main():
 
         if chat.is_complete:
             print("✅ Task complete.\n")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
