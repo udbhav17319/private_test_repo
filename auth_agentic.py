@@ -1,11 +1,3 @@
-line 214, in __init__
-    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)
-pydantic_core._pydantic_core.ValidationError: 1 validation error for CustomChatCompletion
-ai_model_id
-  Field required [type=missing, input_value={'service_id': 'CodeWriter'}, input_type=dict]
-    For further information visit https://errors.pydantic.dev/2.10/v/missing
-
-
 import asyncio
 import dotenv
 import logging
@@ -41,12 +33,13 @@ logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %
 # ---------------- CUSTOM CHAT COMPLETION ----------------
 class CustomChatCompletion(ChatCompletionClientBase):
     def __init__(self, service_id: str, endpoint: str, bearer_token: str):
-        super().__init__(service_id=service_id)
+        # include ai_model_id to satisfy SK validation
+        super().__init__(service_id=service_id, ai_model_id="custom-model")
         self.endpoint = endpoint
         self.bearer_token = bearer_token
 
     async def get_chat_message_contents(self, request, settings=None, **kwargs):
-        """This is the core function SK calls for chat completions."""
+        """Core completion call recognized by Semantic Kernel."""
         prompt_text = request.messages[-1].content if request.messages else ""
         payload = {
             "user_id": "user_1",
@@ -66,6 +59,7 @@ class CustomChatCompletion(ChatCompletionClientBase):
             "Content-Type": "application/json",
         }
         logging.debug(f"[{self.service_id}] Sending payload: {payload}")
+
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(self.endpoint, headers=headers, json=payload)
             response.raise_for_status()
@@ -73,6 +67,7 @@ class CustomChatCompletion(ChatCompletionClientBase):
             logging.debug(f"[{self.service_id}] Raw API response: {data}")
             msg_list = data.get("data", {}).get("msg_list", [])
             text = msg_list[1].get("message", "") if len(msg_list) > 1 else ""
+            logging.debug(f"[{self.service_id}] Extracted text: {text}")
             return [ChatMessageContent(role=AuthorRole.ASSISTANT, content=text)]
 
 
