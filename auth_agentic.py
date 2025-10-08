@@ -1,9 +1,3 @@
-
-
-line 142, in invoke
-    raise AgentChatException("Failed to select agent") from ex
-semantic_kernel.exceptions.agent_exceptions.AgentChatException: Failed to select agent
-
 import asyncio
 import dotenv
 import logging
@@ -34,7 +28,7 @@ TERMINATION_KEYWORD = "yes"
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
-# --- Custom Chat Completion Service (Option 1) ---
+# --- Custom Chat Completion Service ---
 class CustomChatCompletion:
     def __init__(self, service_id: str, endpoint: str, bearer_token: str):
         self.service_id = service_id
@@ -72,7 +66,6 @@ class CustomChatCompletion:
                 text = msg_list[1].get("message", "")
             else:
                 text = ""
-            # Wrap in object Semantic Kernel expects
             return type("ChatCompletionResponse", (), {"content": text})
 
 
@@ -112,10 +105,16 @@ def termination_parser(result):
 
 # --- Main Async Function ---
 async def main():
+    # --- Kernels ---
+    writer_kernel = _create_kernel(CODEWRITER_NAME)
+    reviewer_kernel = _create_kernel(CODE_REVIEWER_NAME)
+    selector_kernel = _create_kernel("selector")
+    terminator_kernel = _create_kernel("terminator")
+
     # --- Agents ---
     writer = ChatCompletionAgent(
         service_id=CODEWRITER_NAME,
-        kernel=_create_kernel(CODEWRITER_NAME),
+        kernel=writer_kernel,
         name=CODEWRITER_NAME,
         instructions=f"""
             You are a highly skilled Python developer named {CODEWRITER_NAME}.
@@ -133,7 +132,7 @@ async def main():
 
     reviewer = ChatCompletionAgent(
         service_id=CODE_REVIEWER_NAME,
-        kernel=_create_kernel(CODE_REVIEWER_NAME),
+        kernel=reviewer_kernel,
         name=CODE_REVIEWER_NAME,
         instructions=f"""
             You are a senior Python code reviewer named {CODE_REVIEWER_NAME}.
@@ -188,7 +187,7 @@ async def main():
         agents=[writer, reviewer],
         selection_strategy=KernelFunctionSelectionStrategy(
             function=selection,
-            kernel=_create_kernel("selector"),
+            kernel=selector_kernel,
             result_parser=safe_result_parser,
             agent_variable_name="agents",
             history_variable_name="history",
@@ -196,7 +195,7 @@ async def main():
         termination_strategy=KernelFunctionTerminationStrategy(
             agents=[writer, reviewer],
             function=termination,
-            kernel=_create_kernel("terminator"),
+            kernel=terminator_kernel,
             result_parser=termination_parser,
             history_variable_name="history",
             maximum_iterations=10,
