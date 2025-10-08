@@ -1,15 +1,3 @@
- Pick exactly one agent based on the user's last message.
-        Valid names:
-        - CodeWriter
-        - CodeReviewer
-        Conversation history:
-        [{'role': 'user', 'content': 'ping pong game code'}]
-
-2025-10-08 17:50:40,297 - ERROR - Function failed. Error: No service found.
-2025-10-08 17:50:40,297 - INFO - Function completed. Duration: 0.005597s
-2025-10-08 17:50:40,297 - ERROR - Kernel Function Selection Strategy next method failed
-
-
 import asyncio
 import dotenv
 import logging
@@ -19,6 +7,7 @@ from semantic_kernel.agents.strategies.selection.kernel_function_selection_strat
 from semantic_kernel.agents.strategies.termination.kernel_function_termination_strategy import KernelFunctionTerminationStrategy
 from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
 from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_prompt_execution_settings import AzureChatPromptExecutionSettings
+from semantic_kernel.connectors.ai.open_ai.services.azure_chat_completion import AzureChatCompletion
 from semantic_kernel.contents.chat_message_content import ChatMessageContent
 from semantic_kernel.contents.utils.author_role import AuthorRole
 from semantic_kernel.functions.kernel_function_from_prompt import KernelFunctionFromPrompt
@@ -29,6 +18,10 @@ import httpx
 dotenv.load_dotenv()
 CUSTOM_ENDPOINT = "https://etiasandboxapp.azurewebsites.net/engine/api/chat/generate_ai_response"
 BEARER_TOKEN = "YOUR_BEARER_TOKEN_HERE"  # replace
+AZURE_OPENAI_ENDPOINT = "https://YOUR_AZURE_OPENAI_ENDPOINT"  # For selector kernel
+AZURE_OPENAI_DEPLOYMENT = "gpt-4o"
+AZURE_OPENAI_API_KEY = "YOUR_API_KEY_HERE"
+
 CODEWRITER_NAME = "CodeWriter"
 CODE_REVIEWER_NAME = "CodeReviewer"
 TERMINATION_KEYWORD = "yes"
@@ -45,7 +38,6 @@ class CustomChatCompletion:
 
     async def get_chat_response_async(self, request):
         prompt_text = request.messages[-1].content if request.messages else ""
-
         payload = {
             "user_id": "user_1",
             "prompt_text": prompt_text,
@@ -59,14 +51,11 @@ class CustomChatCompletion:
             "image": False,
             "bing_search": False
         }
-
         headers = {
             "Authorization": f"Bearer {self.bearer_token}",
             "Content-Type": "application/json"
         }
-
         logging.debug(f"[{self.service_id}] Sending request payload: {payload}")
-
         async with httpx.AsyncClient() as client:
             response = await client.post(self.endpoint, headers=headers, json=payload)
             response.raise_for_status()
@@ -81,12 +70,25 @@ class CustomChatCompletion:
 
 
 # --- Kernel Creation ---
-def _create_kernel(service_id: str) -> Kernel:
+def _create_custom_kernel(service_id: str) -> Kernel:
     kernel = Kernel()
     kernel.add_service(
         CustomChatCompletion(service_id=service_id, endpoint=CUSTOM_ENDPOINT, bearer_token=BEARER_TOKEN)
     )
     kernel.add_plugin(plugin_name="LocalCodeExecutionTool", plugin=LocalPythonPlugin())
+    return kernel
+
+
+def _create_selector_kernel() -> Kernel:
+    kernel = Kernel()
+    kernel.add_service(
+        AzureChatCompletion(
+            service_id="selector_service",
+            endpoint=AZURE_OPENAI_ENDPOINT,
+            deployment_name=AZURE_OPENAI_DEPLOYMENT,
+            api_key=AZURE_OPENAI_API_KEY
+        )
+    )
     return kernel
 
 
@@ -124,10 +126,10 @@ def termination_parser(result):
 # --- Main Async Function ---
 async def main():
     # --- Kernels ---
-    writer_kernel = _create_kernel(CODEWRITER_NAME)
-    reviewer_kernel = _create_kernel(CODE_REVIEWER_NAME)
-    selector_kernel = _create_kernel("selector")
-    terminator_kernel = _create_kernel("terminator")
+    writer_kernel = _create_custom_kernel(CODEWRITER_NAME)
+    reviewer_kernel = _create_custom_kernel(CODE_REVIEWER_NAME)
+    selector_kernel = _create_selector_kernel()
+    terminator_kernel = _create_custom_kernel("terminator")  # can use custom kernel for termination
 
     # --- Agents ---
     writer = ChatCompletionAgent(
@@ -169,7 +171,7 @@ async def main():
         """
     )
 
-    # --- Multi-agent chat with debug logs ---
+    # --- Multi-agent chat ---
     chat = AgentGroupChat(
         agents=[writer, reviewer],
         selection_strategy=KernelFunctionSelectionStrategy(
