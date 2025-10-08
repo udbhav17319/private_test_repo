@@ -1,10 +1,3 @@
-line 220, in main
-    async for response in chat.invoke():
-        print(f"\n🤖 {response.name}:\n{response.content}\n")
-  File "C:\Users\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\semantic_kernel\agents\group_chat\agent_group_chat.py", line 142, in invoke
-    raise AgentChatException("Failed to select agent") from ex
-semantic_kernel.exceptions.agent_exceptions.AgentChatException: Failed to select agent
-
 import asyncio
 import dotenv
 import logging
@@ -17,22 +10,18 @@ from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_
 from semantic_kernel.contents.chat_message_content import ChatMessageContent
 from semantic_kernel.contents.utils.author_role import AuthorRole
 from semantic_kernel.functions.kernel_function_from_prompt import KernelFunctionFromPrompt
-
 from local_python_plugin3 import LocalPythonPlugin
 import httpx
 
-# Load environment
-dotenv.load_dotenv()
-
 # --- Config ---
+dotenv.load_dotenv()
 CUSTOM_ENDPOINT = "https://etiasandboxapp.azurewebsites.net/engine/api/chat/generate_ai_response"
-BEARER_TOKEN = "YOUR_BEARER_TOKEN_HERE"  # replace with your token
-
+BEARER_TOKEN = "YOUR_BEARER_TOKEN_HERE"  # replace
 CODEWRITER_NAME = "CodeWriter"
 CODE_REVIEWER_NAME = "CodeReviewer"
 TERMINATION_KEYWORD = "yes"
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
 # --- Custom Chat Completion Service ---
@@ -64,10 +53,13 @@ class CustomChatCompletion:
             "Content-Type": "application/json"
         }
 
+        logging.debug(f"[{self.service_id}] Sending request payload: {payload}")
+
         async with httpx.AsyncClient() as client:
             response = await client.post(self.endpoint, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()
+            logging.debug(f"[{self.service_id}] Raw response: {data}")
             msg_list = data.get("data", {}).get("msg_list", [])
             if len(msg_list) > 1:
                 text = msg_list[1].get("message", "")
@@ -88,26 +80,33 @@ def _create_kernel(service_id: str) -> Kernel:
 
 # --- Result Parsers ---
 def safe_result_parser(result):
+    logging.debug(f"[Selector Parser] Raw selector result: {result.value}")
     if not result.value:
-        return CODEWRITER_NAME  # fallback
+        logging.debug("[Selector Parser] No value returned, defaulting to CodeWriter")
+        return CODEWRITER_NAME
     val = result.value
     if isinstance(val, list) and val:
         val = val[0]
     name = str(val).strip().lower().replace("\n", "").replace(" ", "")
+    logging.debug(f"[Selector Parser] Parsed agent name: {name}")
     if "codewriter" in name:
         return CODEWRITER_NAME
     if "codereviewer" in name:
         return CODE_REVIEWER_NAME
-    return CODEWRITER_NAME  # fallback
+    logging.debug("[Selector Parser] Unknown agent, defaulting to CodeWriter")
+    return CODEWRITER_NAME
 
 
 def termination_parser(result):
+    logging.debug(f"[Termination Parser] Raw termination result: {result.value}")
     if not result.value:
         return False
     val = result.value
     if isinstance(val, list) and val:
         val = val[0]
-    return TERMINATION_KEYWORD.lower() in str(val).lower()
+    done = TERMINATION_KEYWORD.lower() in str(val).lower()
+    logging.debug(f"[Termination Parser] Done: {done}")
+    return done
 
 
 # --- Main Async Function ---
@@ -123,73 +122,42 @@ async def main():
         service_id=CODEWRITER_NAME,
         kernel=writer_kernel,
         name=CODEWRITER_NAME,
-        instructions=f"""
-            You are a highly skilled Python developer named {CODEWRITER_NAME}.
-            - Write clean Python code based on user requests.
-            - Return only code, no explanations.
-            - Let the executor handle running the code.
-        """,
-        execution_settings=AzureChatPromptExecutionSettings(
-            service_id=CODEWRITER_NAME,
-            temperature=0.2,
-            max_tokens=1500,
-            function_choice_behavior=FunctionChoiceBehavior.NoneInvoke(),
-        ),
+        instructions="Write Python code only.",
+        execution_settings=AzureChatPromptExecutionSettings(service_id=CODEWRITER_NAME)
     )
 
     reviewer = ChatCompletionAgent(
         service_id=CODE_REVIEWER_NAME,
         kernel=reviewer_kernel,
         name=CODE_REVIEWER_NAME,
-        instructions=f"""
-            You are a senior Python code reviewer named {CODE_REVIEWER_NAME}.
-            - Review code for correctness, readability, performance, and best practices.
-            - Suggest improvements concisely.
-            - Do not execute code unless explicitly asked.
-        """,
-        execution_settings=AzureChatPromptExecutionSettings(
-            service_id=CODE_REVIEWER_NAME,
-            temperature=0.3,
-            max_tokens=1000,
-            function_choice_behavior=FunctionChoiceBehavior.Required(),
-        ),
+        instructions="Review Python code only.",
+        execution_settings=AzureChatPromptExecutionSettings(service_id=CODE_REVIEWER_NAME)
     )
 
-    # --- Selection strategy ---
+    # --- Selection & termination functions ---
     selection = KernelFunctionFromPrompt(
         function_name="select_next",
         prompt=f"""
-            You are a decision function.
-            Pick exactly one agent based ONLY on the user's last message in history.
-            Valid names:
-            - {CODEWRITER_NAME}
-            - {CODE_REVIEWER_NAME}
-
-            Rules:
-            - If the user asks for code → {CODEWRITER_NAME}.
-            - If the user asks for review → {CODE_REVIEWER_NAME}.
-            - Return ONLY the agent name as plain text, no extra text.
-
-            Conversation history:
-            {{{{$history}}}}
-        """,
+        Pick exactly one agent based on the user's last message.
+        Valid names:
+        - {CODEWRITER_NAME}
+        - {CODE_REVIEWER_NAME}
+        Conversation history:
+        {{{{$history}}}}
+        """
     )
 
-    # --- Termination strategy ---
     termination = KernelFunctionFromPrompt(
         function_name="check_done",
         prompt=f"""
-            Determine if the user's request has been fully completed.
-            Say only "{TERMINATION_KEYWORD}" if:
-            - The correct agent has responded once with output/code.
-            Otherwise, respond with anything else.
-
-            Conversation history:
-            {{{{$history}}}}
-        """,
+        Determine if the user's request has been fully completed.
+        Say "{TERMINATION_KEYWORD}" if done.
+        Conversation history:
+        {{{{$history}}}}
+        """
     )
 
-    # --- Multi-agent chat ---
+    # --- Multi-agent chat with debug logs ---
     chat = AgentGroupChat(
         agents=[writer, reviewer],
         selection_strategy=KernelFunctionSelectionStrategy(
@@ -209,24 +177,32 @@ async def main():
         ),
     )
 
-    print("🎯 Multi-Agent Assistant Ready. Type your request below:")
-    print("Type `exit` to quit or `reset` to restart.\n")
+    print("🎯 Multi-Agent Assistant Ready. Type `exit` to quit or `reset` to restart.\n")
 
     while True:
         user_input = input("🧠 User:> ")
-        if user_input.lower() == "exit":
+        if user_input.lower() in ["exit", "quit"]:
             break
         if user_input.lower() == "reset":
             await chat.reset()
+            logging.debug("Conversation reset by user")
             print("🔁 Conversation reset.\n")
             continue
 
+        logging.debug(f"Adding user message: {user_input}")
         await chat.add_chat_message(ChatMessageContent(role=AuthorRole.USER, content=user_input))
 
-        async for response in chat.invoke():
-            print(f"\n🤖 {response.name}:\n{response.content}\n")
+        try:
+            async for response in chat.invoke():
+                logging.debug(f"Agent selected: {response.name}")
+                logging.debug(f"Agent response content: {response.content}")
+                print(f"\n🤖 {response.name}:\n{response.content}\n")
+        except Exception as ex:
+            logging.exception("Error during agent invocation")
+            print("❌ Failed to select or invoke agent. See logs above.")
 
         if chat.is_complete:
+            logging.debug("Chat marked as complete.")
             print("✅ Task complete.\n")
 
 
