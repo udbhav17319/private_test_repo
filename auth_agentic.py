@@ -1,3 +1,6 @@
+We were trying to connect our custom AI API (which needs a Bearer token for access) to Semantic Kernel so agents like “CodeWriter” and “Reviewer” could use it for chat completions. However, the framework kept failing to detect the service and threw validation errors saying required fields were missing. We switched to a simpler Semantic Kernel setup using a custom class to call our API directly with logging and authentication. The setup is cleaner now, but it’s still not fully working — the model call isn’t getting picked up properly by the agents, and responses aren’t flowing end-to-end yet.
+
+
 import asyncio
 import logging
 import requests
