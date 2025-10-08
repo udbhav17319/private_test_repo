@@ -1,9 +1,3 @@
-line 33, in <module>
-    class CustomChatCompletion(IChatCompletion):
-                               ^^^^^^^^^^^^^^^
-NameError: name 'IChatCompletion' is not defined. Did you mean: 'ChatCompletionAgent'?
-
-
 import asyncio
 import dotenv
 import logging
@@ -16,7 +10,6 @@ from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_
 from semantic_kernel.contents.chat_message_content import ChatMessageContent
 from semantic_kernel.contents.utils.author_role import AuthorRole
 from semantic_kernel.functions.kernel_function_from_prompt import KernelFunctionFromPrompt
-from semantic_kernel.connectors.ai.chat_completion import IChatCompletion
 
 from local_python_plugin3 import LocalPythonPlugin
 import httpx
@@ -26,7 +19,7 @@ dotenv.load_dotenv()
 
 # --- Config ---
 CUSTOM_ENDPOINT = "https://etiasandboxapp.azurewebsites.net/engine/api/chat/generate_ai_response"
-BEARER_TOKEN = "YOUR_BEARER_TOKEN_HERE"
+BEARER_TOKEN = "YOUR_BEARER_TOKEN_HERE"  # replace with your token
 
 CODEWRITER_NAME = "CodeWriter"
 CODE_REVIEWER_NAME = "CodeReviewer"
@@ -35,8 +28,8 @@ TERMINATION_KEYWORD = "yes"
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
-# --- Custom Chat Completion Service implementing IChatCompletion ---
-class CustomChatCompletion(IChatCompletion):
+# --- Custom Chat Completion Service (Option 1) ---
+class CustomChatCompletion:
     def __init__(self, service_id: str, endpoint: str, bearer_token: str):
         self.service_id = service_id
         self.endpoint = endpoint
@@ -68,15 +61,12 @@ class CustomChatCompletion(IChatCompletion):
             response = await client.post(self.endpoint, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()
-
-            # Extract AI response from data["msg_list"][1]["message"]
             msg_list = data.get("data", {}).get("msg_list", [])
             if len(msg_list) > 1:
                 text = msg_list[1].get("message", "")
             else:
                 text = ""
-
-            # Wrap in object expected by Semantic Kernel
+            # Wrap in object Semantic Kernel expects
             return type("ChatCompletionResponse", (), {"content": text})
 
 
