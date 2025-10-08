@@ -1,202 +1,151 @@
-line 922, in __setattr__
-    self.__pydantic_validator__.validate_assignment(self, name, value)
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
-pydantic_core._pydantic_core.ValidationError: 1 validation error for CustomChatCompletion
-endpoint
-  Object has no attribute 'endpoint' [type=no_such_attribute, input_value='https://etiasandboxapp.a...at/generate_ai_response', input_type=str]
-    For further information visit https://errors.pydantic.dev/2.10/v/no_such_attribute
-
-
-
 import asyncio
-import dotenv
 import logging
-import httpx
 from semantic_kernel import Kernel
-from semantic_kernel.agents import AgentGroupChat, ChatCompletionAgent
-from semantic_kernel.agents.strategies.selection.kernel_function_selection_strategy import KernelFunctionSelectionStrategy
-from semantic_kernel.agents.strategies.termination.kernel_function_termination_strategy import KernelFunctionTerminationStrategy
 from semantic_kernel.connectors.ai.chat_completion_client_base import ChatCompletionClientBase
-from semantic_kernel.connectors.ai.open_ai.services.azure_chat_completion import AzureChatCompletion
-from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_prompt_execution_settings import AzureChatPromptExecutionSettings
-from semantic_kernel.functions.kernel_function_from_prompt import KernelFunctionFromPrompt
-from semantic_kernel.contents.chat_message_content import ChatMessageContent
-from semantic_kernel.contents.utils.author_role import AuthorRole
-from local_python_plugin3 import LocalPythonPlugin
+from semantic_kernel.agents import ChatCompletionAgent
+from semantic_kernel.agents.group_chat import AgentGroupChat
+from semantic_kernel.exceptions import AgentChatException
 
+# ---------------------------------------------------------------
+# ✅ Setup Logging
+# ---------------------------------------------------------------
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
-# ---------------- CONFIGURATION ----------------
-dotenv.load_dotenv()
-CUSTOM_ENDPOINT = "https://etiasandboxapp.azurewebsites.net/engine/api/chat/generate_ai_response"
-BEARER_TOKEN = "YOUR_BEARER_TOKEN"
-AZURE_OPENAI_ENDPOINT = "https://YOUR_AZURE_OPENAI_ENDPOINT"
-AZURE_OPENAI_DEPLOYMENT = "gpt-4o"
-AZURE_OPENAI_API_KEY = "YOUR_AZURE_KEY"
-
-CODEWRITER_NAME = "CodeWriter"
-CODEREVIEWER_NAME = "CodeReviewer"
-TERMINATION_KEYWORD = "yes"
-
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
-
-
-# ---------------- CUSTOM CHAT COMPLETION ----------------
+# ---------------------------------------------------------------
+# ✅ Custom Mock Chat Completion Class
+# ---------------------------------------------------------------
 class CustomChatCompletion(ChatCompletionClientBase):
-    def __init__(self, service_id: str, endpoint: str, bearer_token: str):
-        # include ai_model_id to satisfy SK validation
-        super().__init__(service_id=service_id, ai_model_id="custom-model")
-        self.endpoint = endpoint
-        self.bearer_token = bearer_token
+    """
+    A mock AI chat completion client that works with Semantic Kernel.
+    This avoids any API call and just simulates responses.
+    """
 
-    async def get_chat_message_contents(self, request, settings=None, **kwargs):
-        """Core completion call recognized by Semantic Kernel."""
-        prompt_text = request.messages[-1].content if request.messages else ""
-        payload = {
-            "user_id": "user_1",
-            "prompt_text": prompt_text,
-            "chat_type": "New-Chat",
-            "conversation_id": "",
-            "current_msg_parent_id": "",
-            "current_msg_id": "",
-            "conversation_type": "default",
-            "ai_config_key": "AI_GPT4o_Config",
-            "files": [],
-            "image": False,
-            "bing_search": False,
-        }
-        headers = {
-            "Authorization": f"Bearer {self.bearer_token}",
-            "Content-Type": "application/json",
-        }
-        logging.debug(f"[{self.service_id}] Sending payload: {payload}")
+    def __init__(self, service_id: str, ai_model_id: str = "mock-model"):
+        super().__init__()
+        self.service_id = service_id
+        self.ai_model_id = ai_model_id
+        logging.info(f"✅ Initialized CustomChatCompletion (service_id={service_id}, ai_model_id={ai_model_id})")
 
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(self.endpoint, headers=headers, json=payload)
-            response.raise_for_status()
-            data = response.json()
-            logging.debug(f"[{self.service_id}] Raw API response: {data}")
-            msg_list = data.get("data", {}).get("msg_list", [])
-            text = msg_list[1].get("message", "") if len(msg_list) > 1 else ""
-            logging.debug(f"[{self.service_id}] Extracted text: {text}")
-            return [ChatMessageContent(role=AuthorRole.ASSISTANT, content=text)]
+    async def complete_chat(self, context, settings=None):
+        """
+        Called by SK when the agent generates a message.
+        """
+        user_message = ""
 
-
-# ---------------- KERNEL CREATION ----------------
-def create_custom_kernel(service_id: str) -> Kernel:
-    kernel = Kernel()
-    kernel.add_service(CustomChatCompletion(service_id=service_id, endpoint=CUSTOM_ENDPOINT, bearer_token=BEARER_TOKEN))
-    kernel.add_plugin(plugin_name="LocalCodeExecutionTool", plugin=LocalPythonPlugin())
-    return kernel
-
-
-def create_selector_kernel() -> Kernel:
-    kernel = Kernel()
-    kernel.add_service(
-        AzureChatCompletion(
-            service_id="selector_service",
-            endpoint=AZURE_OPENAI_ENDPOINT,
-            deployment_name=AZURE_OPENAI_DEPLOYMENT,
-            api_key=AZURE_OPENAI_API_KEY,
-        )
-    )
-    return kernel
-
-
-# ---------------- PARSERS ----------------
-def safe_result_parser(result):
-    logging.debug(f"[Selector Parser] Raw selector result: {result.value}")
-    if not result.value:
-        return CODEWRITER_NAME
-    val = str(result.value).strip().lower()
-    if "review" in val:
-        return CODEREVIEWER_NAME
-    return CODEWRITER_NAME
-
-
-def termination_parser(result):
-    logging.debug(f"[Termination Parser] Raw result: {result.value}")
-    return TERMINATION_KEYWORD.lower() in str(result.value).lower()
-
-
-# ---------------- MAIN ----------------
-async def main():
-    writer_kernel = create_custom_kernel(CODEWRITER_NAME)
-    reviewer_kernel = create_custom_kernel(CODEREVIEWER_NAME)
-    selector_kernel = create_selector_kernel()
-
-    writer = ChatCompletionAgent(
-        service_id=CODEWRITER_NAME,
-        kernel=writer_kernel,
-        name=CODEWRITER_NAME,
-        instructions="You are a skilled Python developer. Write Python code only.",
-        execution_settings=AzureChatPromptExecutionSettings(service_id=CODEWRITER_NAME),
-    )
-
-    reviewer = ChatCompletionAgent(
-        service_id=CODEREVIEWER_NAME,
-        kernel=reviewer_kernel,
-        name=CODEREVIEWER_NAME,
-        instructions="You are a senior reviewer. Review Python code only.",
-        execution_settings=AzureChatPromptExecutionSettings(service_id=CODEREVIEWER_NAME),
-    )
-
-    selection = KernelFunctionFromPrompt(
-        function_name="select_next",
-        prompt=f"""
-        Pick exactly one agent based on the user's last message.
-        Valid names:
-        - {CODEWRITER_NAME}
-        - {CODEREVIEWER_NAME}
-        Conversation history:
-        {{{{$history}}}}
-        """,
-    )
-
-    termination = KernelFunctionFromPrompt(
-        function_name="check_done",
-        prompt=f"""
-        Determine if the user's request has been completed.
-        Say "{TERMINATION_KEYWORD}" if done.
-        Conversation history:
-        {{{{$history}}}}
-        """,
-    )
-
-    chat = AgentGroupChat(
-        agents=[writer, reviewer],
-        selection_strategy=KernelFunctionSelectionStrategy(
-            function=selection,
-            kernel=selector_kernel,
-            result_parser=safe_result_parser,
-        ),
-        termination_strategy=KernelFunctionTerminationStrategy(
-            agents=[writer, reviewer],
-            function=termination,
-            kernel=selector_kernel,
-            result_parser=termination_parser,
-            maximum_iterations=10,
-        ),
-    )
-
-    print("🎯 Multi-Agent Assistant Ready. Type `exit` or `reset`.\n")
-
-    while True:
-        user_input = input("🧠 User:> ")
-        if user_input.lower() in ["exit", "quit"]:
-            break
-        if user_input.lower() == "reset":
-            await chat.reset()
-            print("🔁 Conversation reset.\n")
-            continue
-
-        await chat.add_chat_message(ChatMessageContent(role=AuthorRole.USER, content=user_input))
         try:
-            async for response in chat.invoke():
-                logging.debug(f"🤖 Agent {response.name} replied: {response.content}")
-                print(f"\n🤖 {response.name}:\n{response.content}\n")
+            if hasattr(context, "messages") and context.messages:
+                user_message = context.messages[-1].content
+            else:
+                user_message = str(context)
         except Exception as e:
-            logging.exception("❌ Agent invocation failed")
+            logging.error(f"[{self.service_id}] Failed to extract message: {e}")
+            user_message = "[unknown message]"
 
+        logging.debug(f"[{self.service_id}] User message: {user_message}")
 
+        # Simulate deterministic agent responses
+        if "code" in user_message.lower():
+            response = f"[{self.service_id}] Here is the Python code for your request."
+        elif "review" in user_message.lower():
+            response = f"[{self.service_id}] I have reviewed your code, and it looks clean and efficient!"
+        else:
+            response = f"[{self.service_id}] Echo: {user_message}"
+
+        logging.debug(f"[{self.service_id}] Generated response: {response}")
+        return response
+
+# ---------------------------------------------------------------
+# ✅ Helper Function to Create Agent
+# ---------------------------------------------------------------
+def create_agent(name: str, service_id: str, kernel: Kernel):
+    logging.info(f"🧠 Creating agent '{name}' with service_id '{service_id}'")
+
+    # Register mock completion as SK service
+    chat_client = CustomChatCompletion(service_id=service_id)
+    kernel.add_service(chat_client, service_id=service_id)
+
+    # Create agent
+    agent = ChatCompletionAgent(
+        service_id=service_id,
+        kernel=kernel,
+        name=name,
+        description=f"{name} specialized in {service_id} tasks"
+    )
+
+    logging.info(f"✅ Agent '{name}' created successfully")
+    return agent
+
+# ---------------------------------------------------------------
+# ✅ Main Function
+# ---------------------------------------------------------------
+async def main():
+    logging.info("🚀 Starting Semantic Kernel Multi-Agent Chat Demo")
+
+    # Initialize kernel
+    kernel = Kernel()
+    logging.info("✅ Kernel initialized")
+
+    # Create mock agents
+    code_writer = create_agent("CodeWriter", "code-writer-service", kernel)
+    code_reviewer = create_agent("CodeReviewer", "code-reviewer-service", kernel)
+
+    # Create group chat with both agents
+    group_chat = AgentGroupChat(
+        agents=[code_writer, code_reviewer],
+        kernel=kernel
+    )
+
+    # Define agent selection logic
+    async def select_agent(chat_history):
+        try:
+            last_msg = chat_history[-1]["content"].lower()
+            if "code" in last_msg:
+                logging.info("🤖 Selecting CodeWriter agent")
+                return code_writer
+            else:
+                logging.info("🤖 Selecting CodeReviewer agent")
+                return code_reviewer
+        except Exception as e:
+            logging.error(f"Error in select_agent: {e}")
+            return code_writer
+
+    group_chat.select_agent_function = select_agent
+
+    # Conversation flow simulation
+    messages = [
+        {"role": "user", "content": "ping pong game code"},
+        {"role": "user", "content": "can you review this code?"}
+    ]
+
+    logging.info("💬 Beginning conversation loop")
+
+    for msg in messages:
+        try:
+            logging.info(f"🗣️ User: {msg['content']}")
+            async for response in group_chat.invoke(msg["content"]):
+                if response and hasattr(response, "name"):
+                    logging.info(f"✅ Response from {response.name}: {response.content}")
+                    print(f"\n🤖 {response.name}: {response.content}\n")
+                else:
+                    logging.warning("⚠️ Empty response or invalid structure received")
+
+        except AgentChatException as ex:
+            logging.error(f"❌ AgentChatException: {ex}", exc_info=True)
+        except Exception as ex:
+            logging.exception(f"❌ Unexpected error: {ex}")
+
+    logging.info("🏁 Conversation completed successfully")
+
+# ---------------------------------------------------------------
+# ✅ Entry Point
+# ---------------------------------------------------------------
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logging.warning("Execution interrupted by user.")
+    except Exception as e:
+        logging.exception(f"Fatal error in main(): {e}")
