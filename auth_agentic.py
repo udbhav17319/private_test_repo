@@ -11,15 +11,16 @@ from semantic_kernel.contents.chat_message_content import ChatMessageContent
 from semantic_kernel.contents.utils.author_role import AuthorRole
 from semantic_kernel.functions.kernel_function_from_prompt import KernelFunctionFromPrompt
 
-from local_python_plugin3 import LocalPythonPlugin  # your local code executor
+from local_python_plugin3 import LocalPythonPlugin
 import httpx
+import json
 
-# Load environment
+# Load environment variables
 dotenv.load_dotenv()
 
-# Custom Azure OpenAI-like endpoint config
+# --- Config ---
 CUSTOM_ENDPOINT = "https://etiasandboxapp.azurewebsites.net/engine/api/chat/generate_ai_response"
-BEARER_TOKEN = "YOUR_BEARER_TOKEN_HERE"  # replace with env or literal
+BEARER_TOKEN = "YOUR_BEARER_TOKEN_HERE"  # replace with your token
 
 CODEWRITER_NAME = "CodeWriter"
 CODE_REVIEWER_NAME = "CodeReviewer"
@@ -36,7 +37,6 @@ class CustomChatCompletion:
         self.bearer_token = bearer_token
 
     async def get_chat_response_async(self, request):
-        # Take last user message
         prompt_text = request.messages[-1].content if request.messages else ""
 
         payload = {
@@ -62,9 +62,14 @@ class CustomChatCompletion:
             response = await client.post(self.endpoint, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()
-            # Adjust based on your API response structure
-            text = data.get("result", "")
-            # Wrap in a simple object that SK expects
+
+            # Extract AI response from data["msg_list"][1]["message"]
+            msg_list = data.get("data", {}).get("msg_list", [])
+            if len(msg_list) > 1:
+                text = msg_list[1].get("message", "")
+            else:
+                text = ""
+
             return type("ChatCompletionResponse", (), {"content": text})
 
 
@@ -81,16 +86,17 @@ def _create_kernel(service_id: str) -> Kernel:
 # --- Result Parsers ---
 def safe_result_parser(result):
     if not result.value:
-        return None
+        return CODEWRITER_NAME  # fallback
     val = result.value
     if isinstance(val, list) and val:
         val = val[0]
-    name = str(val).strip().lower()
+    # Normalize string: lowercase, strip, remove spaces/newlines
+    name = str(val).strip().lower().replace("\n", "").replace(" ", "")
     if "codewriter" in name:
         return CODEWRITER_NAME
     if "codereviewer" in name:
         return CODE_REVIEWER_NAME
-    return None
+    return CODEWRITER_NAME  # fallback
 
 
 def termination_parser(result):
@@ -154,7 +160,7 @@ async def main():
             Rules:
             - If the user asks for code → {CODEWRITER_NAME}.
             - If the user asks for review → {CODE_REVIEWER_NAME}.
-            - Return ONLY the agent name, no extra text.
+            - Return ONLY the agent name as plain text, no extra text.
 
             Conversation history:
             {{{{$history}}}}
@@ -220,66 +226,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
-def safe_result_parser(result):
-    if not result.value:
-        return CODEWRITER_NAME  # fallback default
-    val = result.value
-    if isinstance(val, list) and val:
-        val = val[0]
-    name = str(val).strip().lower().replace("\n", "").replace(" ", "")
-    if "codewriter" in name:
-        return CODEWRITER_NAME
-    if "codereviewer" in name:
-        return CODE_REVIEWER_NAME
-    # fallback to writer if unrecognized
-    return CODEWRITER_NAME
-
-
-
-
-class CustomChatCompletion:
-    def __init__(self, service_id: str, endpoint: str, bearer_token: str):
-        self.service_id = service_id
-        self.endpoint = endpoint
-        self.bearer_token = bearer_token
-
-    async def get_chat_response_async(self, request):
-        prompt_text = request.messages[-1].content if request.messages else ""
-
-        payload = {
-            "user_id": "user_1",
-            "prompt_text": prompt_text,
-            "chat_type": "New-Chat",
-            "conversation_id": "",
-            "current_msg_parent_id": "",
-            "current_msg_id": "",
-            "conversation_type": "default",
-            "ai_config_key": "AI_GPT4o_Config",
-            "files": [],
-            "image": False,
-            "bing_search": False
-        }
-
-        headers = {
-            "Authorization": f"Bearer {self.bearer_token}",
-            "Content-Type": "application/json"
-        }
-
-        async with httpx.AsyncClient() as client:
-            response = await client.post(self.endpoint, headers=headers, json=payload)
-            response.raise_for_status()
-            data = response.json()
-
-            # Extract AI response from data["msg_list"][1]["message"]
-            msg_list = data.get("data", {}).get("msg_list", [])
-            if len(msg_list) > 1:
-                text = msg_list[1].get("message", "")
-            else:
-                text = ""
-
-            # Wrap in object SK expects
-            return type("ChatCompletionResponse", (), {"content": text})
-
-
