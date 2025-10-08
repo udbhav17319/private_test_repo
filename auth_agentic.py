@@ -10,17 +10,17 @@ from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_
 from semantic_kernel.contents.chat_message_content import ChatMessageContent
 from semantic_kernel.contents.utils.author_role import AuthorRole
 from semantic_kernel.functions.kernel_function_from_prompt import KernelFunctionFromPrompt
+from semantic_kernel.connectors.ai.chat_completion import IChatCompletion
 
 from local_python_plugin3 import LocalPythonPlugin
 import httpx
-import json
 
-# Load environment variables
+# Load environment
 dotenv.load_dotenv()
 
 # --- Config ---
 CUSTOM_ENDPOINT = "https://etiasandboxapp.azurewebsites.net/engine/api/chat/generate_ai_response"
-BEARER_TOKEN = "YOUR_BEARER_TOKEN_HERE"  # replace with your token
+BEARER_TOKEN = "YOUR_BEARER_TOKEN_HERE"
 
 CODEWRITER_NAME = "CodeWriter"
 CODE_REVIEWER_NAME = "CodeReviewer"
@@ -29,8 +29,8 @@ TERMINATION_KEYWORD = "yes"
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
-# --- Custom Chat Completion Service ---
-class CustomChatCompletion:
+# --- Custom Chat Completion Service implementing IChatCompletion ---
+class CustomChatCompletion(IChatCompletion):
     def __init__(self, service_id: str, endpoint: str, bearer_token: str):
         self.service_id = service_id
         self.endpoint = endpoint
@@ -70,6 +70,7 @@ class CustomChatCompletion:
             else:
                 text = ""
 
+            # Wrap in object expected by Semantic Kernel
             return type("ChatCompletionResponse", (), {"content": text})
 
 
@@ -90,7 +91,6 @@ def safe_result_parser(result):
     val = result.value
     if isinstance(val, list) and val:
         val = val[0]
-    # Normalize string: lowercase, strip, remove spaces/newlines
     name = str(val).strip().lower().replace("\n", "").replace(" ", "")
     if "codewriter" in name:
         return CODEWRITER_NAME
@@ -213,10 +213,8 @@ async def main():
             print("🔁 Conversation reset.\n")
             continue
 
-        # Add user message
         await chat.add_chat_message(ChatMessageContent(role=AuthorRole.USER, content=user_input))
 
-        # Invoke agents
         async for response in chat.invoke():
             print(f"\n🤖 {response.name}:\n{response.content}\n")
 
@@ -226,19 +224,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
-
-raise KernelServiceNotFoundError("No service found.")
-semantic_kernel.exceptions.kernel_exceptions.KernelServiceNotFoundError: No service found.
-2025-10-08 17:16:31,651 - ERROR - Failed to select agent: Agent Failure - Strategy failed to execute function.
-Traceback (most recent call last):
-    selected_service: tuple["AIServiceClientBase", PromptExecutionSettings] = context.kernel.select_ai_service(
-                                                                              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
-        function=self, arguments=context.arguments
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    )
-
-     line 142, in invoke
-    raise AgentChatException("Failed to select agent") from ex
-semantic_kernel.exceptions.agent_exceptions.AgentChatException: Failed to select agent
