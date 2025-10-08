@@ -1,3 +1,10 @@
+line 220, in main
+    async for response in chat.invoke():
+        print(f"\n🤖 {response.name}:\n{response.content}\n")
+  File "C:\Users\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\semantic_kernel\agents\group_chat\agent_group_chat.py", line 142, in invoke
+    raise AgentChatException("Failed to select agent") from ex
+semantic_kernel.exceptions.agent_exceptions.AgentChatException: Failed to select agent
+
 import asyncio
 import dotenv
 import logging
