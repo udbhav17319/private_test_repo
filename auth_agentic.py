@@ -1,3 +1,9 @@
+vices\kernel_services_extension.py", line 88, in get_service
+    raise KernelServiceNotFoundError(f"No services found of type {type}.")
+semantic_kernel.exceptions.kernel_exceptions.KernelServiceNotFoundError: No services found of type <class 'semantic_kernel.connectors.ai.chat_completion_client_base.ChatCompletionClientBase'>.
+❌ Failed to select or invoke agent. See logs above.
+
+
 import asyncio
 import dotenv
 import logging
