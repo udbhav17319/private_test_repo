@@ -220,3 +220,13 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+   selected_service: tuple["AIServiceClientBase", PromptExecutionSettings] = context.kernel.select_ai_service(
+                                                                              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        function=self, arguments=context.arguments
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+
+    failed to select next agent
