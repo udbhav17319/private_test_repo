@@ -1,3 +1,15 @@
+ Pick exactly one agent based on the user's last message.
+        Valid names:
+        - CodeWriter
+        - CodeReviewer
+        Conversation history:
+        [{'role': 'user', 'content': 'ping pong game code'}]
+
+2025-10-08 17:50:40,297 - ERROR - Function failed. Error: No service found.
+2025-10-08 17:50:40,297 - INFO - Function completed. Duration: 0.005597s
+2025-10-08 17:50:40,297 - ERROR - Kernel Function Selection Strategy next method failed
+
+
 import asyncio
 import dotenv
 import logging
