@@ -222,11 +222,17 @@ if __name__ == "__main__":
     asyncio.run(main())
 
 
-   selected_service: tuple["AIServiceClientBase", PromptExecutionSettings] = context.kernel.select_ai_service(
-                                                                              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
-        function=self, arguments=context.arguments
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    )
-    ^
+def safe_result_parser(result):
+    if not result.value:
+        return CODEWRITER_NAME  # fallback default
+    val = result.value
+    if isinstance(val, list) and val:
+        val = val[0]
+    name = str(val).strip().lower().replace("\n", "").replace(" ", "")
+    if "codewriter" in name:
+        return CODEWRITER_NAME
+    if "codereviewer" in name:
+        return CODE_REVIEWER_NAME
+    # fallback to writer if unrecognized
+    return CODEWRITER_NAME
 
-    failed to select next agent
