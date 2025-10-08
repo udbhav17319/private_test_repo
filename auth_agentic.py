@@ -236,3 +236,50 @@ def safe_result_parser(result):
     # fallback to writer if unrecognized
     return CODEWRITER_NAME
 
+
+
+
+class CustomChatCompletion:
+    def __init__(self, service_id: str, endpoint: str, bearer_token: str):
+        self.service_id = service_id
+        self.endpoint = endpoint
+        self.bearer_token = bearer_token
+
+    async def get_chat_response_async(self, request):
+        prompt_text = request.messages[-1].content if request.messages else ""
+
+        payload = {
+            "user_id": "user_1",
+            "prompt_text": prompt_text,
+            "chat_type": "New-Chat",
+            "conversation_id": "",
+            "current_msg_parent_id": "",
+            "current_msg_id": "",
+            "conversation_type": "default",
+            "ai_config_key": "AI_GPT4o_Config",
+            "files": [],
+            "image": False,
+            "bing_search": False
+        }
+
+        headers = {
+            "Authorization": f"Bearer {self.bearer_token}",
+            "Content-Type": "application/json"
+        }
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(self.endpoint, headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+
+            # Extract AI response from data["msg_list"][1]["message"]
+            msg_list = data.get("data", {}).get("msg_list", [])
+            if len(msg_list) > 1:
+                text = msg_list[1].get("message", "")
+            else:
+                text = ""
+
+            # Wrap in object SK expects
+            return type("ChatCompletionResponse", (), {"content": text})
+
+
