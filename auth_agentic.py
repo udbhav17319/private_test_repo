@@ -1,3 +1,11 @@
+line 214, in __init__
+    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)
+pydantic_core._pydantic_core.ValidationError: 1 validation error for CustomChatCompletion
+ai_model_id
+  Field required [type=missing, input_value={'service_id': 'CodeWriter'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/missing
+
+
 import asyncio
 import dotenv
 import logging
