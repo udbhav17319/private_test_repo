@@ -7,20 +7,19 @@ from semantic_kernel.agents.strategies.selection.kernel_function_selection_strat
 from semantic_kernel.agents.strategies.termination.kernel_function_termination_strategy import KernelFunctionTerminationStrategy
 from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
 from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_prompt_execution_settings import AzureChatPromptExecutionSettings
-from semantic_kernel.connectors.ai.open_ai.services.azure_chat_completion import AzureChatCompletion
 from semantic_kernel.contents.chat_message_content import ChatMessageContent
 from semantic_kernel.contents.utils.author_role import AuthorRole
 from semantic_kernel.functions.kernel_function_from_prompt import KernelFunctionFromPrompt
 
 from local_python_plugin3 import LocalPythonPlugin  # your local code executor
+import httpx
 
 # Load environment
 dotenv.load_dotenv()
 
-# Azure OpenAI Config (Bearer-token-based)
-azure_openai_endpoint = "https://etiasandboxapp.azurewebsites.net/engine/api/chat/generate_ai_response"
-bearer_token = "YOUR_BEARER_TOKEN_HERE"  # replace or load via env var
-azure_openai_deployment = "gpt-4o"
+# Custom Azure OpenAI-like endpoint config
+CUSTOM_ENDPOINT = "https://etiasandboxapp.azurewebsites.net/engine/api/chat/generate_ai_response"
+BEARER_TOKEN = "YOUR_BEARER_TOKEN_HERE"  # replace with env or literal
 
 CODEWRITER_NAME = "CodeWriter"
 CODE_REVIEWER_NAME = "CodeReviewer"
@@ -29,22 +28,57 @@ TERMINATION_KEYWORD = "yes"
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
+# --- Custom Chat Completion Service ---
+class CustomChatCompletion:
+    def __init__(self, service_id: str, endpoint: str, bearer_token: str):
+        self.service_id = service_id
+        self.endpoint = endpoint
+        self.bearer_token = bearer_token
+
+    async def get_chat_response_async(self, request):
+        # Take last user message
+        prompt_text = request.messages[-1].content if request.messages else ""
+
+        payload = {
+            "user_id": "user_1",
+            "prompt_text": prompt_text,
+            "chat_type": "New-Chat",
+            "conversation_id": "",
+            "current_msg_parent_id": "",
+            "current_msg_id": "",
+            "conversation_type": "default",
+            "ai_config_key": "AI_GPT4o_Config",
+            "files": [],
+            "image": False,
+            "bing_search": False
+        }
+
+        headers = {
+            "Authorization": f"Bearer {self.bearer_token}",
+            "Content-Type": "application/json"
+        }
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(self.endpoint, headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+            # Adjust based on your API response structure
+            text = data.get("result", "")
+            # Wrap in a simple object that SK expects
+            return type("ChatCompletionResponse", (), {"content": text})
+
+
+# --- Kernel Creation ---
 def _create_kernel(service_id: str) -> Kernel:
     kernel = Kernel()
-    # Add Azure Chat Completion with Bearer token auth
     kernel.add_service(
-        AzureChatCompletion(
-            service_id=service_id,
-            endpoint=azure_openai_endpoint,
-            deployment_name=azure_openai_deployment,
-            api_key=bearer_token,  # bearer token passed here
-            headers={"Authorization": f"Bearer {bearer_token}"},  # ensure auth header set
-        )
+        CustomChatCompletion(service_id=service_id, endpoint=CUSTOM_ENDPOINT, bearer_token=BEARER_TOKEN)
     )
     kernel.add_plugin(plugin_name="LocalCodeExecutionTool", plugin=LocalPythonPlugin())
     return kernel
 
 
+# --- Result Parsers ---
 def safe_result_parser(result):
     if not result.value:
         return None
@@ -68,6 +102,7 @@ def termination_parser(result):
     return TERMINATION_KEYWORD.lower() in str(val).lower()
 
 
+# --- Main Async Function ---
 async def main():
     # --- Agents ---
     writer = ChatCompletionAgent(
@@ -185,7 +220,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
-{  "user_id": "",  "prompt_text": "Hi",  "chat_type": "New-Chat",  "conversation_id": "",  "current_msg_parent_id": "",  "current_msg_id": "",  "conversation_type": "default",  "ai_config_key": "AI_GPT4o_Config",  "files": [    "string"  ],  "image": false,  "bing_search": false}
-
