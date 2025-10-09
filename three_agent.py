@@ -1,10 +1,9 @@
 import asyncio
 import dotenv
 import logging
+import json
 from semantic_kernel import Kernel
-from semantic_kernel.agents import AgentGroupChat, ChatCompletionAgent
-from semantic_kernel.agents.strategies.selection.kernel_function_selection_strategy import KernelFunctionSelectionStrategy
-from semantic_kernel.agents.strategies.termination.kernel_function_termination_strategy import KernelFunctionTerminationStrategy
+from semantic_kernel.agents import ChatCompletionAgent
 from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
 from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_prompt_execution_settings import AzureChatPromptExecutionSettings
 from semantic_kernel.connectors.ai.open_ai.services.azure_chat_completion import AzureChatCompletion
@@ -26,10 +25,11 @@ CODEWRITER_NAME = "CodeWriter"
 CODEEXECUTOR_NAME = "CodeExecutor"
 CODE_REVIEWER_NAME = "CodeReviewer"
 APIBUILDER_NAME = "APIBUILDER"
-TERMINATION_KEYWORD = "yes"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+
+# --- Kernel setup ---
 def _create_kernel(service_id: str) -> Kernel:
     kernel = Kernel()
     kernel.add_service(
@@ -43,33 +43,69 @@ def _create_kernel(service_id: str) -> Kernel:
     kernel.add_plugin(plugin_name="LocalCodeExecutionTool", plugin=LocalPythonPlugin())
     return kernel
 
-def safe_result_parser(result):
-    if not result.value:
-        return None
-    val = result.value
-    if isinstance(val, list) and val:
-        val = val[0]
-    name = str(val).strip().lower()
-    if "codeexecutor" in name:
-        return CODEEXECUTOR_NAME
-    if "codewriter" in name:
-        return CODEWRITER_NAME
-    if "codereviewer" in name:
-        return CODE_REVIEWER_NAME
-    if "apibuilder" in name:
-        return APIBUILDER_NAME
-    return None
 
-def termination_parser(result):
-    if not result.value:
-        return False
-    val = result.value
-    if isinstance(val, list) and val:
-        val = val[0]
-    return TERMINATION_KEYWORD.lower() in str(val).lower()
+# --- Multi-agent invocation logic ---
+async def invoke_selected_agents(kernel: Kernel, agents_dict: dict, user_message: str):
+    """
+    Selects one or more agents using the selection function, then executes them concurrently.
+    """
+    # 1️⃣ Ask the selection agent which agents to run
+    selection_prompt = KernelFunctionFromPrompt(
+        function_name="select_agents",
+        prompt=f"""
+            You are a decision-making system responsible for selecting which agents should handle the user's latest request.
 
-async def main():
-    # --- Agents ---
+            You can select one or more agents depending on the complexity of the user's message.
+            Valid agents:
+            - {CODEWRITER_NAME}
+            - {CODEEXECUTOR_NAME}
+            - {CODE_REVIEWER_NAME}
+            - {APIBUILDER_NAME}
+
+            Guidelines:
+            - If the user asks to write or generate code → include {CODEWRITER_NAME}.
+            - If the user asks to execute or test code → include {CODEEXECUTOR_NAME}.
+            - If the user asks to review or optimize code → include {CODE_REVIEWER_NAME}.
+            - If the user asks to build or deploy an API → include {APIBUILDER_NAME}.
+            - If multiple actions are implied (e.g., "write and run code", or "generate an API and test it") → include all relevant agents separated by commas.
+            - Return ONLY the agent names, separated by commas — no extra words, no explanations.
+
+            User message:
+            {{{{user_message}}}}
+        """,
+    )
+
+    result = await selection_prompt.invoke(_create_kernel("selector"), user_message=user_message)
+    selected_raw = str(result).strip()
+    selected_agents = [a.strip() for a in selected_raw.split(",") if a.strip()]
+
+    print(f"\n🎯 Selected Agents: {selected_agents}")
+
+    if not selected_agents:
+        return {"error": "No agents selected"}
+
+    # 2️⃣ Run selected agents concurrently
+    async def run_agent(agent_name):
+        agent = agents_dict.get(agent_name)
+        if not agent:
+            return {agent_name: "Agent not found"}
+        try:
+            response = await agent.complete_chat(
+                [ChatMessageContent(role=AuthorRole.USER, content=user_message)]
+            )
+            return {agent_name: str(response[0].content) if response else ""}
+        except Exception as e:
+            return {agent_name: f"Error: {e}"}
+
+    results = await asyncio.gather(*(run_agent(a) for a in selected_agents))
+    merged = {}
+    for r in results:
+        merged.update(r)
+    return merged
+
+
+# --- Agent creation ---
+def create_agents():
     writer = ChatCompletionAgent(
         service_id=CODEWRITER_NAME,
         kernel=_create_kernel(CODEWRITER_NAME),
@@ -130,51 +166,12 @@ async def main():
         service_id=APIBUILDER_NAME,
         kernel=_create_kernel(APIBUILDER_NAME),
         name=APIBUILDER_NAME,
-        instructions = f"""
+        instructions=f"""
             You are {APIBUILDER_NAME}, an expert in building REST APIs as Azure Functions in Node.js.
-
-            Your goal is to generate **complete deployable Azure Function apps** based on user requests. 
-
-            Requirements:
-
-            1. **Azure LLM Integration**
-            - Use Azure OpenAI / LLM for processing.
-            - Read **API key, endpoint, and deployment** from environment variables:
-                - OPENAI_KEY
-                - OPENAI_ENDPOINT
-                - OPENAI_DEPLOYMENT
-            - The API should perform translations or other LLM tasks as requested.
-
-            2. **Input Handling**
-            - Accept **plain text** in JSON body.
-            - Accept **text files** uploaded via `multipart/form-data` (in-memory).
-            - Allow optional **target language** in body or query, default to English.
-            - Handle everything **on the fly**, no blob storage.
-
-            3. **Node.js Azure Functions v4+ style**
-            - `exports.default = async function(context, req) { ... }`
-            - Include **function.json** with proper HTTP trigger + response bindings.
-
-            4. **Output Requirements**
-            - Return **only the code files**: `index.js` and `function.json`.
-            - The code must be **ready to deploy to Azure Functions**.
-            - Do not include explanations, comments, or extra text.
-
-            5. **Example API to Implement**
-            - Translation API:
-                - Accepts text or file.
-                - Uses Azure LLM for translation.
-                - Returns translated text as JSON.
-
-            User will provide:
-            - The **type of API** (like translation) and any specific **details**.
-            - The **agent must generate the full deployable Node.js Azure Function**.
-
-            Always ensure:
-            - **Environment variables are used** for sensitive info.
-            - Code handles **both text and file inputs in-memory**.
-            - Output is **directly usable** in Azure Functions.
-            """,
+            - Generate complete deployable Azure Function apps.
+            - Output only `index.js` and `function.json`.
+            - Code must be ready for Azure Function deployment.
+        """,
         execution_settings=AzureChatPromptExecutionSettings(
             service_id=APIBUILDER_NAME,
             temperature=0.1,
@@ -183,85 +180,34 @@ async def main():
         ),
     )
 
-    # --- Selection strategy ---
-    selection = KernelFunctionFromPrompt(
-        function_name="select_next",
-        prompt=f"""
-            You are a decision function.
-            Pick exactly one agent based ONLY on the user's last message in history.
-            Valid names:
-            - {CODEWRITER_NAME}
-            - {CODEEXECUTOR_NAME}
-            - {CODE_REVIEWER_NAME}
-            - {APIBUILDER_NAME}
+    return {
+        CODEWRITER_NAME: writer,
+        CODEEXECUTOR_NAME: executor,
+        CODE_REVIEWER_NAME: reviewer,
+        APIBUILDER_NAME: apibuilder,
+    }
 
-            Rules:
-            - If the user asks for code → {CODEWRITER_NAME}.
-            - If the user asks to execute code → {CODEEXECUTOR_NAME}.
-            - If the user asks for review → {CODE_REVIEWER_NAME}.
-            - If the user asks to build an API (e.g., Azure Function, REST API) → {APIBUILDER_NAME}.
-            - Return ONLY the agent name, no extra text.
 
-            Conversation history:
-            {{{{$history}}}}
-        """
-    )
+# --- Main loop ---
+async def main():
+    agents = create_agents()
+    kernel = _create_kernel("main")
 
-    # --- Termination strategy ---
-    termination = KernelFunctionFromPrompt(
-        function_name="check_done",
-        prompt=f"""
-            Determine if the user's request has been fully completed.
-            Say only "{TERMINATION_KEYWORD}" if:
-            - The correct agent has responded once with output/code.
-            Otherwise, respond with anything else.
-
-            Conversation history:
-            {{{{$history}}}}
-        """
-    )
-
-    # --- Multi-agent chat ---
-    chat = AgentGroupChat(
-        agents=[writer, executor, reviewer, apibuilder],
-        selection_strategy=KernelFunctionSelectionStrategy(
-            function=selection,
-            kernel=_create_kernel("selector"),
-            result_parser=safe_result_parser,
-            agent_variable_name="agents",
-            history_variable_name="history",
-        ),
-        termination_strategy=KernelFunctionTerminationStrategy(
-            agents=[writer, executor, reviewer, apibuilder],
-            function=termination,
-            kernel=_create_kernel("terminator"),
-            result_parser=termination_parser,
-            history_variable_name="history",
-            maximum_iterations=10,
-        ),
-    )
-
-    print("🎯 Multi-Agent Assistant Ready with API Builder. Type your request below:")
-    print("Type `exit` to quit or `reset` to restart.\n")
+    print("🤖 Multi-Agent Chat (Dynamic Selection Enabled)")
+    print("Type 'exit' to quit.\n")
 
     while True:
-        user_input = input("🧠 User:> ")
+        user_input = input("🧠 User:> ").strip()
         if user_input.lower() == "exit":
             break
-        if user_input.lower() == "reset":
-            await chat.reset()
-            print("🔁 Conversation reset.\n")
+        if not user_input:
             continue
 
-        # Add user message
-        await chat.add_chat_message(ChatMessageContent(role=AuthorRole.USER, content=user_input))
+        result = await invoke_selected_agents(kernel, agents, user_input)
+        print("\n=== Combined Output ===")
+        print(json.dumps(result, indent=2))
+        print("=======================\n")
 
-        # Invoke agents
-        async for response in chat.invoke():
-            print(f"\n🤖 {response.name}:\n{response.content}\n")
-
-        if chat.is_complete:
-            print("✅ Task complete.\n")
 
 if __name__ == "__main__":
     asyncio.run(main())
