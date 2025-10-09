@@ -1,3 +1,19 @@
+Prompt#1: I am working for a large enterprise and I need to showcase Semantic Kernel is the way to go for orchestration. Write a python script that calculates the most financially valuable opportunities for the enterprise. Execute the generated code to check for error.
+ 
+Agents used: Agent 1 and Agent 2
+ 
+ 
+Prompt #2: I am working for a large enterprise and I need to write a python code for a ping pong game. Review it for improvements. 
+ 
+Agent used: Agent 1 and Agent 3
+ 
+Prompt#3: 
+ 
+I am working for a large enterprise and we are running a hackathon Write python code for a ping pong game. Execute the generated code to check for error. Publish the app for me.
+
+
+
+
 import asyncio
 import dotenv
 import logging
