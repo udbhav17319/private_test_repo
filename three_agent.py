@@ -1,6 +1,8 @@
 import asyncio
 import dotenv
 import logging
+import os
+import uuid
 from semantic_kernel import Kernel
 from semantic_kernel.agents import AgentGroupChat, ChatCompletionAgent
 from semantic_kernel.agents.strategies.selection.kernel_function_selection_strategy import KernelFunctionSelectionStrategy
@@ -12,25 +14,24 @@ from semantic_kernel.contents.chat_message_content import ChatMessageContent
 from semantic_kernel.contents.utils.author_role import AuthorRole
 from semantic_kernel.functions.kernel_function_from_prompt import KernelFunctionFromPrompt
 
-from local_python_plugin3 import LocalPythonPlugin  # Your local code execution plugin
+from local_python_plugin3 import LocalPythonPlugin  # Your code execution plugin
 
-# Load .env
 dotenv.load_dotenv()
 
 # Azure OpenAI Config
-azure_openai_endpoint = "https://etiasandboxaifoundry.openai.azure.com/"
-azure_openai_api_key = ""
-azure_openai_deployment = "gpt-4o"
+azure_openai_endpoint = os.getenv("OPENAI_ENDPOINT", "")
+azure_openai_api_key = os.getenv("OPENAI_KEY", "")
+azure_openai_deployment = os.getenv("OPENAI_DEPLOYMENT", "gpt-4o")
 
+# Agent names
 CODEWRITER_NAME = "CodeWriter"
 CODEEXECUTOR_NAME = "CodeExecutor"
 CODE_REVIEWER_NAME = "CodeReviewer"
-APIBUILDER_NAME = "APIBUILDER"
-TERMINATION_KEYWORD = "yes"
+TERMINATION_KEYWORD = "done"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-
+# Create kernel per agent
 def _create_kernel(service_id: str) -> Kernel:
     kernel = Kernel()
     kernel.add_service(
@@ -44,50 +45,31 @@ def _create_kernel(service_id: str) -> Kernel:
     kernel.add_plugin(plugin_name="LocalCodeExecutionTool", plugin=LocalPythonPlugin())
     return kernel
 
-
-def safe_result_parser(result, called_agents: set):
-    """Return the next agent to call that hasn't been called yet."""
+# Result parser for selecting next agent
+def parse_agent_result(result):
     if not result.value:
         return None
     val = result.value
     if isinstance(val, list) and val:
         val = val[0]
-    name = str(val).strip().lower()
-    # Map to agent names
-    mapping = {
-        "codeexecutor": CODEEXECUTOR_NAME,
-        "codewriter": CODEWRITER_NAME,
-        "codereviewer": CODE_REVIEWER_NAME,
-        "apibuilder": APIBUILDER_NAME,
-    }
-    selected_agent = mapping.get(name)
-    if selected_agent and selected_agent not in called_agents:
-        return selected_agent
-    # Skip if already called
+    name = str(val).strip()
+    if name.lower() in ["codewriter", "writer"]:
+        return CODEWRITER_NAME
+    if name.lower() in ["codeexecutor", "executor"]:
+        return CODEEXECUTOR_NAME
+    if name.lower() in ["codereviewer", "reviewer"]:
+        return CODE_REVIEWER_NAME
+    if TERMINATION_KEYWORD in name.lower():
+        return TERMINATION_KEYWORD
     return None
 
-
-def termination_parser(result):
-    if not result.value:
-        return False
-    val = result.value
-    if isinstance(val, list) and val:
-        val = val[0]
-    return TERMINATION_KEYWORD.lower() in str(val).lower()
-
-
-async def main():
+async def multi_agent_loop(user_query: str, max_iterations: int = 5):
     # --- Agents ---
     writer = ChatCompletionAgent(
         service_id=CODEWRITER_NAME,
         kernel=_create_kernel(CODEWRITER_NAME),
         name=CODEWRITER_NAME,
-        instructions=f"""
-            You are a highly skilled Python developer named {CODEWRITER_NAME}.
-            - Write clean Python code based on user requests.
-            - Return only code, no explanations.
-            - Let the executor handle running the code.
-        """,
+        instructions=f"You are a skilled Python developer. Write clean Python code based on user requests. Return only code, no explanations.",
         execution_settings=AzureChatPromptExecutionSettings(
             service_id=CODEWRITER_NAME,
             temperature=0.2,
@@ -100,12 +82,7 @@ async def main():
         service_id=CODEEXECUTOR_NAME,
         kernel=_create_kernel(CODEEXECUTOR_NAME),
         name=CODEEXECUTOR_NAME,
-        instructions=f"""
-            You are an execution agent named {CODEEXECUTOR_NAME}.
-            - Run Python code and return output/errors.
-            - If a library is missing, install it.
-            - Respond in plain English summarizing results.
-        """,
+        instructions=f"You are an execution agent. Run Python code and return output/errors.",
         execution_settings=AzureChatPromptExecutionSettings(
             service_id=CODEEXECUTOR_NAME,
             temperature=0.2,
@@ -120,121 +97,87 @@ async def main():
         service_id=CODE_REVIEWER_NAME,
         kernel=_create_kernel(CODE_REVIEWER_NAME),
         name=CODE_REVIEWER_NAME,
-        instructions=f"""
-            You are a senior Python code reviewer named {CODE_REVIEWER_NAME}.
-            - Review code for correctness, readability, performance, and best practices.
-            - Suggest improvements concisely.
-            - Do not execute code unless explicitly asked.
-        """,
+        instructions=f"You are a senior Python code reviewer. Review code for correctness, readability, performance, and best practices. Suggest improvements concisely.",
         execution_settings=AzureChatPromptExecutionSettings(
             service_id=CODE_REVIEWER_NAME,
-            temperature=0.3,
+            temperature=0.2,
             max_tokens=1000,
             function_choice_behavior=FunctionChoiceBehavior.Required(),
         ),
     )
 
-    apibuilder = ChatCompletionAgent(
-        service_id=APIBUILDER_NAME,
-        kernel=_create_kernel(APIBUILDER_NAME),
-        name=APIBUILDER_NAME,
-        instructions=f"""
-            You are {APIBUILDER_NAME}, an expert in building REST APIs as Azure Functions in Node.js.
+    agents = {
+        CODEWRITER_NAME: writer,
+        CODEEXECUTOR_NAME: executor,
+        CODE_REVIEWER_NAME: reviewer
+    }
 
-            Your goal is to generate complete deployable Azure Function apps based on user requests.
-            Handle text and file inputs in-memory, provide final ready-to-deploy code only.
-        """,
-        execution_settings=AzureChatPromptExecutionSettings(
-            service_id=APIBUILDER_NAME,
-            temperature=0.1,
-            max_tokens=2000,
-            function_choice_behavior=FunctionChoiceBehavior.NoneInvoke(),
-        ),
-    )
-
-    # --- Selection strategy ---
-    selection = KernelFunctionFromPrompt(
-        function_name="select_next",
+    # --- LLM selection function ---
+    select_next_agent_fn = KernelFunctionFromPrompt(
+        function_name="select_next_agent",
         prompt=f"""
-            You are a decision function.
-            Pick exactly one agent based ONLY on the user's last message in history.
-            Valid names:
-            - {CODEWRITER_NAME}
-            - {CODEEXECUTOR_NAME}
-            - {CODE_REVIEWER_NAME}
-            - {APIBUILDER_NAME}
+You are an agent selector. Based on the user's query and conversation history, decide which agent should run next.
+Agents available:
+- CodeWriter: writes Python code
+- CodeExecutor: executes Python code
+- CodeReviewer: reviews Python code
 
-            Rules:
-            - If the user asks for code → {CODEWRITER_NAME}.
-            - If the user asks to execute code → {CODEEXECUTOR_NAME}.
-            - If the user asks for review → {CODE_REVIEWER_NAME}.
-            - If the user asks to build an API → {APIBUILDER_NAME}.
-            - Return ONLY the agent name, no extra text.
+Rules:
+- Only choose the agent(s) required for this query.
+- If the task is fully completed, reply "{TERMINATION_KEYWORD}".
+- Return only the agent name or "{TERMINATION_KEYWORD}" with no extra text.
 
-            Conversation history:
-            {{{{$history}}}}
+User Query:
+{{{{user_query}}}}
+
+Conversation History:
+{{{{history}}}}
         """
     )
 
-    termination = KernelFunctionFromPrompt(
-        function_name="check_done",
-        prompt=f"""
-            Determine if the user's request has been fully completed.
-            Say only "{TERMINATION_KEYWORD}" if:
-            - The correct agent has responded once with output/code.
-            Otherwise, respond with anything else.
-
-            Conversation history:
-            {{{{$history}}}}
-        """
-    )
-
-    # --- Multi-agent chat ---
+    # --- Initialize AgentGroupChat ---
     chat = AgentGroupChat(
-        agents=[writer, executor, reviewer, apibuilder],
+        agents=list(agents.values()),
         selection_strategy=KernelFunctionSelectionStrategy(
-            function=selection,
+            function=select_next_agent_fn,
             kernel=_create_kernel("selector"),
-            result_parser=lambda res: safe_result_parser(res, called_agents=set()),
+            result_parser=parse_agent_result,
             agent_variable_name="agents",
             history_variable_name="history",
         ),
         termination_strategy=KernelFunctionTerminationStrategy(
-            agents=[writer, executor, reviewer, apibuilder],
-            function=termination,
+            agents=list(agents.values()),
+            function=select_next_agent_fn,
             kernel=_create_kernel("terminator"),
-            result_parser=termination_parser,
+            result_parser=lambda r: TERMINATION_KEYWORD in str(r.value).lower(),
             history_variable_name="history",
-            maximum_iterations=10,
+            maximum_iterations=max_iterations,
         ),
     )
 
-    print("🎯 Multi-Agent Assistant Ready. Type your request below:")
-    print("Type `exit` to quit or `reset` to restart.\n")
+    await chat.add_chat_message(ChatMessageContent(role=AuthorRole.USER, content=user_query))
+
+    final_responses = []
+    async for response in chat.invoke():
+        final_responses.append({"agent": response.name, "content": response.content})
+        logging.info(f"\n🤖 {response.name}:\n{response.content}\n")
+
+    return final_responses
+
+# ------------------ Interactive loop ------------------
+async def main():
+    print("🎯 Multi-Agent Assistant Ready!")
+    print("Type `exit` to quit.\n")
 
     while True:
         user_input = input("🧠 User:> ")
         if user_input.lower() == "exit":
             break
-        if user_input.lower() == "reset":
-            await chat.reset()
-            print("🔁 Conversation reset.\n")
-            continue
 
-        # Add user message
-        await chat.add_chat_message(ChatMessageContent(role=AuthorRole.USER, content=user_input))
-
-        # Track agents already called for this input
-        called_agents = set()
-
-        # Invoke agents and chain automatically
-        async for response in chat.invoke():
-            print(f"\n🤖 {response.name}:\n{response.content}\n")
-            called_agents.add(response.name)
-
-        if chat.is_complete:
-            print("✅ Task complete.\n")
-
+        responses = await multi_agent_loop(user_input)
+        print("✅ Task complete.\n")
+        for r in responses:
+            print(f"[{r['agent']}] Output:\n{r['content']}\n")
 
 if __name__ == "__main__":
     asyncio.run(main())
