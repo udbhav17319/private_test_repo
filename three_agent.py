@@ -1,21 +1,30 @@
-VALID_AGENTS = ["CodeWriter", "CodeExecutor", "CodeReviewer", "APIBUILDER"]
-
-def parse_agent_result(result):
+def safe_result_parser(result, agents):
+    """
+    Convert LLM output into actual agent objects to call.
+    Supports multiple agents in sequence.
+    """
     if not result.value:
-        return None
+        return []
     val = str(result.value).strip()
-    # Make lowercase comparison
-    val_lower = val.lower()
+    selected_agents = []
 
-    # Map LLM output to valid agents
-    agents_to_call = []
-    for agent in VALID_AGENTS:
-        if agent.lower() in val_lower:
-            agents_to_call.append(agent)
+    # Split by comma and normalize
+    for name in val.split(","):
+        name = name.strip()
+        for agent in agents:
+            if agent.name.lower() == name.lower():
+                selected_agents.append(agent)
+                break
 
-    if not agents_to_call:
-        return None
-    return agents_to_call  # return a list of agents to invoke in order
+    return selected_agents
+
+selection_strategy = KernelFunctionSelectionStrategy(
+    function=selection,
+    kernel=_create_kernel("selector"),
+    result_parser=lambda r: safe_result_parser(r, chat.agents),  # Pass actual agents
+    agent_variable_name="agents",
+    history_variable_name="history",
+)
 
 
 
