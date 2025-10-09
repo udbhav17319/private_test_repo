@@ -1,3 +1,7 @@
+ line 126, in _render_function_call
+    raise CodeBlockRenderException(error_msg) from exc
+semantic_kernel.exceptions.template_engine_exceptions.CodeBlockRenderException: Function `user_message` not found
+
 import asyncio
 import dotenv
 import logging
