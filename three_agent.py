@@ -1,3 +1,7 @@
+line 891, in __getattr__
+    raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+AttributeError: 'AgentGroupChat' object has no attribute 'history_agents'
+
 import asyncio
 import dotenv
 import logging
