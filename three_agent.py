@@ -1,4 +1,15 @@
-Unhandled exception Traceback (most recent call last): File "/home/site/wwwroot/function_app.py", line 556, in main result = await run_multi_agent(prompt, max_iterations) ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ File "/home/site/wwwroot/function_app.py", line 484, in run_multi_agent async for response in chat.invoke(): File "/home/site/wwwroot/.python_packages/lib/site-packages/semantic_kernel/agents/group_chat/agent_group_chat.py", line 144, in invoke async for message in super().invoke_agent(selected_agent): File "/home/site/wwwroot/.python_packages/lib/site-packages/semantic_kernel/agents/group_chat/agent_chat.py", line 144, in invoke_agent async for is_visible, message in channel.invoke(agent): File "/home/site/wwwroot/.python_packages/lib/site-packages/semantic_kernel/agents/channels/chat_history_channel.py", line 75, in invoke mutated_history.add(mutated_message) File "/home/site/wwwroot/.python_packages/lib/site-packages/semantic_kernel/contents/chat_message_content.py", line 318, in __hash__ return hash((self.tag, self.role, self.content, self.encoding, self.finish_reason, *self.items)) ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ File "/home/site/wwwroot/.python_packages/lib/site-packages/semantic_kernel/contents/function_result_content.py", line 197, in __hash__ return hash(( ^^^^^^ TypeError: unhashable type: 'dict'
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=300)
+        resp.raise_for_status()
+        # Convert response JSON to a string to avoid unhashable dicts in SK internals
+        resp_json = resp.json()
+        # Return a string (JSON serialized). Kernel/plugin results should be primitives/strings.
+        return json.dumps(resp_json, ensure_ascii=False)
+    except requests.RequestException as e:
+        logging.error(f"Error executing code in container app session pool: {e}")
+        # Return a stringified error so it's safe to include in SK function result content
+        return json.dumps({"error": str(e)})
+
 
 import asyncio
 import datetime
