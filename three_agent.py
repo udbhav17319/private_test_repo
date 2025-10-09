@@ -1,3 +1,24 @@
+VALID_AGENTS = ["CodeWriter", "CodeExecutor", "CodeReviewer", "APIBUILDER"]
+
+def parse_agent_result(result):
+    if not result.value:
+        return None
+    val = str(result.value).strip()
+    # Make lowercase comparison
+    val_lower = val.lower()
+
+    # Map LLM output to valid agents
+    agents_to_call = []
+    for agent in VALID_AGENTS:
+        if agent.lower() in val_lower:
+            agents_to_call.append(agent)
+
+    if not agents_to_call:
+        return None
+    return agents_to_call  # return a list of agents to invoke in order
+
+
+
 import asyncio
 import dotenv
 import logging
