@@ -1,103 +1,104 @@
+# full_magentic_azure.py
 import asyncio
 import logging
 from html import escape
-from semantic_kernel.agents.agent import Agent
-from semantic_kernel.agents.orchestration.magentic import (
+
+from semantic_kernel.kernel import Kernel
+from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
+from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
+from semantic_kernel.contents.chat_message_content import ChatMessageContent
+from semantic_kernel.agents.orchestration.magentic_orchestration import (
     StandardMagenticManager,
     MagenticOrchestration,
 )
-from semantic_kernel.connectors.ai.open_ai import OpenAIChatCompletion  # Using OpenAI connector
-from semantic_kernel.agents.runtime.core.cancellation_token import CancellationToken
-from semantic_kernel.agents.runtime.core.core_runtime import CoreRuntime
-from semantic_kernel.contents.chat_message_content import ChatMessageContent, AuthorRole
-from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
+from semantic_kernel.agents.agent import Agent
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
+# -----------------------
+# 1. Azure OpenAI Setup
+# -----------------------
+AZURE_OPENAI_ENDPOINT = "https://<your-resource-name>.openai.azure.com/"
+AZURE_OPENAI_KEY = "<your-api-key>"
+AZURE_OPENAI_DEPLOYMENT = "<deployment-name>"
+MODEL = "gpt-4"
 
-# -----------------------------
-# 1. Initialize LLM
-# -----------------------------
-llm = OpenAIChatCompletion(
-    model="gpt-4",  # GPT-4 for high-quality code generation
-    api_key="YOUR_OPENAI_API_KEY",
+kernel = Kernel()
+
+azure_chat = AzureChatCompletion(
+    endpoint=AZURE_OPENAI_ENDPOINT,
+    api_key=AZURE_OPENAI_KEY,
+    deployment_name=AZURE_OPENAI_DEPLOYMENT,
+    model=MODEL,
 )
 
-prompt_settings = llm.instantiate_prompt_execution_settings()
+prompt_settings = PromptExecutionSettings()
 
-
-# -----------------------------
+# -----------------------
 # 2. Define Agents
-# -----------------------------
+# -----------------------
 class CodeWriterAgent(Agent):
-    """Writes Python code for the given task."""
-    def __init__(self):
-        super().__init__(name="CodeWriter", description="Writes Python code for the given task.")
+    def __init__(self, kernel: Kernel):
+        super().__init__("CodeWriter", description="Writes Python code based on task")
+        self._kernel = kernel
+
+    async def run(self, task: str) -> ChatMessageContent:
+        prompt = f"Write a Python function for the following task:\n{task}"
+        content = await azure_chat.get_chat_message_content(
+            chat_history=None,
+            prompt_execution_settings=prompt_settings,
+            input_text=prompt,
+        )
+        return content
 
 
 class CodeReviewerAgent(Agent):
-    """Reviews Python code and suggests improvements."""
-    def __init__(self):
-        super().__init__(name="CodeReviewer", description="Reviews Python code and suggests improvements.")
+    def __init__(self, kernel: Kernel):
+        super().__init__("CodeReviewer", description="Reviews and suggests improvements for Python code")
+        self._kernel = kernel
 
+    async def run(self, code: str) -> ChatMessageContent:
+        prompt = f"Review this Python code and suggest improvements:\n{code}"
+        content = await azure_chat.get_chat_message_content(
+            chat_history=None,
+            prompt_execution_settings=prompt_settings,
+            input_text=prompt,
+        )
+        return content
 
-writer_agent = CodeWriterAgent()
-reviewer_agent = CodeReviewerAgent()
-
-
-# -----------------------------
-# 3. Define Manager
-# -----------------------------
-manager = StandardMagenticManager(chat_completion_service=llm, prompt_execution_settings=prompt_settings)
-
-
-# -----------------------------
-# 4. Setup Magentic Orchestration
-# -----------------------------
-orchestration = MagenticOrchestration(
-    members=[writer_agent, reviewer_agent],
-    manager=manager,
-    name="CodeWriter-Reviewer Orchestration",
-    description="A Magentic orchestration with a code writer and reviewer using LLM.",
+# -----------------------
+# 3. Setup Magentic Manager
+# -----------------------
+manager = StandardMagenticManager(
+    chat_completion_service=azure_chat,
+    prompt_execution_settings=prompt_settings,
 )
 
+# -----------------------
+# 4. Create Agents List
+# -----------------------
+agents = [
+    CodeWriterAgent(kernel),
+    CodeReviewerAgent(kernel),
+]
 
-# -----------------------------
-# 5. Runtime simulation
-# -----------------------------
+# -----------------------
+# 5. Magentic Orchestration
+# -----------------------
+magentic_orchestration = MagenticOrchestration(
+    members=agents,
+    manager=manager,
+    name="CodeWriterReviewOrchestration",
+    description="A Magentic orchestration where one agent writes code and the other reviews it.",
+)
+
+# -----------------------
+# 6. Run Task
+# -----------------------
 async def main():
-    runtime = CoreRuntime()
+    task = ChatMessageContent(role="user", content="Write a Python function to calculate Fibonacci numbers recursively.")
+    await magentic_orchestration.run(task)
 
-    async def exception_callback(exc: BaseException):
-        logging.error(f"Exception: {exc}")
-
-    async def result_callback(result: ChatMessageContent):
-        print("\n--- FINAL CODE ---")
-        print(result.content)
-
-    # Prepare orchestration
-    await orchestration._prepare(
-        runtime,
-        internal_topic_type="code_task_topic",
-        exception_callback=exception_callback,
-        result_callback=result_callback
-    )
-
-    # Start orchestration with a task
-    task_description = "Write a Python function that takes a list of numbers and returns the sum of squares."
-    task = ChatMessageContent(role=AuthorRole.USER, content=task_description)
-
-    await orchestration._start(
-        task=task,
-        runtime=runtime,
-        internal_topic_type="code_task_topic",
-        cancellation_token=CancellationToken()
-    )
-
-
-# -----------------------------
-# 6. Run the orchestration
-# -----------------------------
 if __name__ == "__main__":
     asyncio.run(main())
