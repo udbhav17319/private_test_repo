@@ -1,104 +1,106 @@
-# full_magentic_azure.py
+import os
 import asyncio
-import logging
-from html import escape
-
-from semantic_kernel.kernel import Kernel
+from semantic_kernel.agents import ChatCompletionAgent, OpenAIAssistantAgent
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
-from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
-from semantic_kernel.contents.chat_message_content import ChatMessageContent
-from semantic_kernel.agents.orchestration.magentic_orchestration import (
-    StandardMagenticManager,
-    MagenticOrchestration,
-)
-from semantic_kernel.agents.agent import Agent
+from semantic_kernel.contents import ChatMessageContent
+from semantic_kernel.agents import MagenticOrchestration
+from semantic_kernel.agents.runtime import InProcessRuntime
 
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+# ============================================================
+# 🧠 1. Azure OpenAI Configuration
+# ============================================================
+# Set these environment variables before running:
+# os.environ["AZURE_OPENAI_API_KEY"] = "<your-azure-openai-key>"
+# os.environ["AZURE_OPENAI_ENDPOINT"] = "<your-endpoint>"
+# os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"] = "<your-deployment-name>"
 
-# -----------------------
-# 1. Azure OpenAI Setup
-# -----------------------
-AZURE_OPENAI_ENDPOINT = "https://<your-resource-name>.openai.azure.com/"
-AZURE_OPENAI_KEY = "<your-api-key>"
-AZURE_OPENAI_DEPLOYMENT = "<deployment-name>"
-MODEL = "gpt-4"
+AZURE_OPENAI_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
 
-kernel = Kernel()
-
-azure_chat = AzureChatCompletion(
+# ============================================================
+# 🧩 2. Define Azure Chat Completion service
+# ============================================================
+azure_service = AzureChatCompletion(
+    deployment_name=AZURE_OPENAI_DEPLOYMENT,
     endpoint=AZURE_OPENAI_ENDPOINT,
     api_key=AZURE_OPENAI_KEY,
-    deployment_name=AZURE_OPENAI_DEPLOYMENT,
-    model=MODEL,
 )
 
-prompt_settings = PromptExecutionSettings()
-
-# -----------------------
-# 2. Define Agents
-# -----------------------
-class CodeWriterAgent(Agent):
-    def __init__(self, kernel: Kernel):
-        super().__init__("CodeWriter", description="Writes Python code based on task")
-        self._kernel = kernel
-
-    async def run(self, task: str) -> ChatMessageContent:
-        prompt = f"Write a Python function for the following task:\n{task}"
-        content = await azure_chat.get_chat_message_content(
-            chat_history=None,
-            prompt_execution_settings=prompt_settings,
-            input_text=prompt,
-        )
-        return content
-
-
-class CodeReviewerAgent(Agent):
-    def __init__(self, kernel: Kernel):
-        super().__init__("CodeReviewer", description="Reviews and suggests improvements for Python code")
-        self._kernel = kernel
-
-    async def run(self, code: str) -> ChatMessageContent:
-        prompt = f"Review this Python code and suggest improvements:\n{code}"
-        content = await azure_chat.get_chat_message_content(
-            chat_history=None,
-            prompt_execution_settings=prompt_settings,
-            input_text=prompt,
-        )
-        return content
-
-# -----------------------
-# 3. Setup Magentic Manager
-# -----------------------
-manager = StandardMagenticManager(
-    chat_completion_service=azure_chat,
-    prompt_execution_settings=prompt_settings,
+# ============================================================
+# 🧠 3. Create Research Agent
+# ============================================================
+research_agent = ChatCompletionAgent(
+    name="ResearchAgent",
+    description="A helpful assistant with access to web search. Ask it to perform web searches.",
+    instructions="You are a Researcher. You find information without additional computation or quantitative analysis.",
+    service=azure_service,
 )
 
-# -----------------------
-# 4. Create Agents List
-# -----------------------
-agents = [
-    CodeWriterAgent(kernel),
-    CodeReviewerAgent(kernel),
-]
+# ============================================================
+# 🧮 4. Create a Local Code Interpreter Placeholder
+# ============================================================
+# Instead of connecting to Azure Assistant API,
+# we mock code interpreter configuration locally for now.
 
-# -----------------------
-# 5. Magentic Orchestration
-# -----------------------
-magentic_orchestration = MagenticOrchestration(
-    members=agents,
-    manager=manager,
-    name="CodeWriterReviewOrchestration",
-    description="A Magentic orchestration where one agent writes code and the other reviews it.",
-)
+async def setup_local_coder_agent():
+    # Local placeholder setup
+    print("⚙️ Using local placeholder for code interpreter tool...")
 
-# -----------------------
-# 6. Run Task
-# -----------------------
+    # Simulate code interpreter tool configuration
+    code_interpreter_tool = {"name": "local_code_interpreter"}
+    code_interpreter_tool_resources = {"execution": "local"}
+    
+    # Create dummy coder agent (using Azure ChatCompletion)
+    coder_agent = ChatCompletionAgent(
+        name="CoderAgent",
+        description="A helpful assistant that writes and executes code to process and analyze data.",
+        instructions=(
+            "You solve questions using code. "
+            "Simulate code execution locally. Provide detailed reasoning and pseudo-code results."
+        ),
+        service=azure_service,
+    )
+
+    return coder_agent, code_interpreter_tool, code_interpreter_tool_resources
+
+# ============================================================
+# 🗣️ 5. Agent Response Callback
+# ============================================================
+def agent_response_callback(message: ChatMessageContent) -> None:
+    print(f"\n**{message.name}**:\n{message.content}\n")
+
+# ============================================================
+# ⚙️ 6. Orchestration and Runtime
+# ============================================================
 async def main():
-    task = ChatMessageContent(role="user", content="Write a Python function to calculate Fibonacci numbers recursively.")
-    await magentic_orchestration.run(task)
+    coder_agent, code_interpreter_tool, code_interpreter_tool_resources = await setup_local_coder_agent()
+
+    magentic_orchestration = MagenticOrchestration(
+        members=[research_agent, coder_agent],
+        manager=None,  # can define a manager later if needed
+        agent_response_callback=agent_response_callback,
+    )
+
+    runtime = InProcessRuntime()
+    runtime.start()
+
+    task = (
+        "I am preparing a report on the energy efficiency of different machine learning model architectures. "
+        "Compare the estimated training and inference energy consumption of ResNet-50, BERT-base, and GPT-2 "
+        "on standard datasets (e.g., ImageNet for ResNet, GLUE for BERT, WebText for GPT-2). "
+        "Then, estimate the CO2 emissions associated with each, assuming training on an Azure Standard_NC6s_v3 VM "
+        "for 24 hours. Provide tables for clarity, and recommend the most energy-efficient model "
+        "per task type (image classification, text classification, and text generation)."
+    )
+
+    orchestration_result = await magentic_orchestration.invoke(
+        task=task,
+        runtime=runtime,
+    )
+
+    value = await orchestration_result.get()
+    print(f"\n✅ Final result:\n{value}")
 
 if __name__ == "__main__":
     asyncio.run(main())
