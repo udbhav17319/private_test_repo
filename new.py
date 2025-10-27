@@ -1,3 +1,5 @@
+TypeError: Can't instantiate abstract class CodeDebuggerAgent without an implementation for abstract methods 'get_response', 'invoke_stream'
+
 import asyncio
 import subprocess
 import tempfile
