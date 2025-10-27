@@ -16,9 +16,39 @@ from semantic_kernel.agents.runtime import InProcessRuntime
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.contents import ChatMessageContent
 
+# -----------------------------
+# Compatibility monkey-patch:
+# ensure ChatMessageContent.message (and .text) exist and map to .content
+# -----------------------------
+if not hasattr(ChatMessageContent, "message"):
+    # define a property that returns .content (string) and also allows setting it
+    def _get_message(self):
+        return getattr(self, "content", None)
+
+    def _set_message(self, value):
+        # keep both `content` and `message` consistent
+        try:
+            setattr(self, "content", value)
+        except Exception:
+            # fallback: set an attribute named 'message' if content can't be set
+            object.__setattr__(self, "message", value)
+
+    ChatMessageContent.message = property(_get_message, _set_message)
+
+# also add .text for other code that expects it
+if not hasattr(ChatMessageContent, "text"):
+    def _get_text(self):
+        return getattr(self, "content", None)
+    def _set_text(self, value):
+        try:
+            setattr(self, "content", value)
+        except Exception:
+            object.__setattr__(self, "text", value)
+    ChatMessageContent.text = property(_get_text, _set_text)
+
 
 # ==============================
-# ✅ AZURE OPENAI CONFIGURATION
+# ✅ AZURE OPENAI CONFIGURATION (unchanged)
 # ==============================
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY", "")
 AZURE_OPENAI_ENDPOINT = "https://etiasandboxaifoundry.openai.azure.com/"
@@ -29,7 +59,7 @@ agents_used = []
 
 
 # ==============================
-# 🧠 LOCAL CODE EXECUTION AGENT
+# CODE DEBUGGER AGENT
 # ==============================
 class CodeDebuggerAgent(Agent):
     def __init__(self):
@@ -48,17 +78,18 @@ class CodeDebuggerAgent(Agent):
         yield await self._execute_code(task)
 
     async def _execute_code(self, task) -> ChatMessageContent:
-        """Extracts Python code blocks and executes them locally."""
-        # Normalize task input
+        # Normalize incoming task (support ChatMessageContent or raw string)
         if isinstance(task, ChatMessageContent):
-            task = task.content
+            task_text = task.content
         elif isinstance(task, list):
-            task = " ".join(str(t) for t in task)
+            task_text = " ".join(str(t) for t in task)
         elif not isinstance(task, str):
-            task = str(task)
+            task_text = str(task)
+        else:
+            task_text = task
 
-        # Extract Python code block
-        code_blocks = re.findall(r"```(?:python)?\n(.*?)```", task, re.DOTALL)
+        # find python code block(s)
+        code_blocks = re.findall(r"```(?:python)?\n(.*?)```", task_text, re.DOTALL)
         if not code_blocks:
             return ChatMessageContent(
                 name=self.name,
@@ -69,30 +100,38 @@ class CodeDebuggerAgent(Agent):
         code = code_blocks[0].strip()
 
         try:
-            # Write code to a temp file
-            with tempfile.NamedTemporaryFile(mode="w+", suffix=".py", delete=False) as temp_file:
-                temp_file.write(code)
-                temp_file.flush()
-                temp_path = temp_file.name
+            with tempfile.NamedTemporaryFile(mode="w+", suffix=".py", delete=False) as tf:
+                tf.write(code)
+                tf.flush()
+                temp_path = tf.name
 
-            # Execute locally
+            # execute using same python interpreter that's running this script
             result = subprocess.run(
                 [sys.executable, temp_path],
                 capture_output=True,
                 text=True,
-                timeout=20
+                timeout=30,  # adjust timeout as needed
             )
 
             if result.returncode == 0:
                 output = result.stdout.strip() or "✅ Code executed successfully (no output)."
             else:
-                output = f"⚠️ Error (exit code {result.returncode}):\n{result.stderr.strip()}"
+                # show both stderr and stdout if helpful
+                stderr = result.stderr.strip()
+                stdout = result.stdout.strip()
+                output_parts = []
+                if stderr:
+                    output_parts.append(f"STDERR:\n{stderr}")
+                if stdout:
+                    output_parts.append(f"STDOUT:\n{stdout}")
+                output = "\n\n".join(output_parts) or f"⚠️ Process exited with code {result.returncode}."
 
         except subprocess.TimeoutExpired:
-            output = "⏱️ Code execution timed out (20s limit)."
+            output = "⏱️ Code execution timed out (30s)."
         except Exception as e:
-            output = f"❌ Error during execution: {str(e)}"
+            output = f"❌ Exception during execution: {e}"
         finally:
+            # cleanup
             try:
                 os.remove(temp_path)
             except Exception:
@@ -106,7 +145,7 @@ class CodeDebuggerAgent(Agent):
 
 
 # ==============================
-# 🧩 DEFINE AGENTS
+# DEFINE AGENTS
 # ==============================
 async def agents() -> list[Agent]:
     base_service = AzureChatCompletion(
@@ -120,13 +159,13 @@ async def agents() -> list[Agent]:
         ChatCompletionAgent(
             name="ResearchAgent",
             description="Finds information for analysis.",
-            instructions="You are a researcher; gather relevant data points and facts.",
+            instructions="You are a researcher; gather relevant facts.",
             service=base_service,
         ),
         ChatCompletionAgent(
             name="CoderAgent",
             description="Writes and explains Python code.",
-            instructions="Generate correct, working Python code with explanations.",
+            instructions="Generate working Python code with comments.",
             service=base_service,
         ),
         ChatCompletionAgent(
@@ -140,20 +179,17 @@ async def agents() -> list[Agent]:
 
 
 # ==============================
-# 🧩 CLEAN CALLBACK FOR v1.37
+# CALLBACK (uses .content; monkey-patch covers any .message usage elsewhere)
 # ==============================
 def agent_response_callback(message: ChatMessageContent) -> None:
-    """Safely print agent responses (v1.37 style)."""
     agent_name = getattr(message, "name", "UnknownAgent")
-    agent_content = getattr(message, "content", str(message))
+    agent_content = getattr(message, "content", "")
     agents_used.append(agent_name)
-
-    print(f"\n🔹 Agent: {agent_name}")
-    print(f"🗨️  Message:\n{agent_content}\n")
+    print(f"\n🔹 Agent: {agent_name}\n🗨️  Message:\n{agent_content}\n")
 
 
 # ==============================
-# 🚀 MAIN ORCHESTRATION
+# MAIN
 # ==============================
 async def main():
     orchestration = MagenticOrchestration(
@@ -172,17 +208,18 @@ async def main():
     runtime = InProcessRuntime()
     runtime.start()
 
-    result = await orchestration.invoke(
+    orchestration_result = await orchestration.invoke(
         task=(
-            "CoderAgent should write Python code that calculates profitability ratios "
-            "and returns the top 3 opportunities by ROI. "
-            "Then CodeDebuggerAgent should execute it to verify results."
+            "CoderAgent should write Python code that calculates top opportunities by ROI. "
+            "Then CodeDebuggerAgent should execute the generated code and return the output."
         ),
         runtime=runtime,
     )
 
-    final_value = await result.get()
-    print(f"\n***** ✅ FINAL RESULT *****\n{final_value.content}\n")
+    value = await orchestration_result.get()
+    # use .content; monkey-patch ensures old .message accessors work anywhere
+    final_text = getattr(value, "content", str(value))
+    print(f"\n***** ✅ FINAL RESULT *****\n{final_text}\n")
     print("Agents involved:", ", ".join(agents_used))
 
     await runtime.stop_when_idle()
