@@ -1,6 +1,6 @@
 from semantic_kernel.contents import ChatMessageContent
 
-# Monkey patch
+# --- FIX: Add .message and .text attributes to ChatMessageContent dynamically ---
 if not hasattr(ChatMessageContent, "message"):
     def _get_message(self): 
         return getattr(self, "content", None)
@@ -8,8 +8,9 @@ if not hasattr(ChatMessageContent, "message"):
         setattr(self, "content", value)
     ChatMessageContent.message = property(_get_message, _set_message)
 
-# Test
-msg = ChatMessageContent(role="assistant", content="Hello World!")
-print("Message:", msg.message)   # should print Hello World!
-msg.message = "Changed!"
-print("Content:", msg.content)   # should print Changed!
+if not hasattr(ChatMessageContent, "text"):
+    def _get_text(self): 
+        return getattr(self, "content", None)
+    def _set_text(self, value): 
+        setattr(self, "content", value)
+    ChatMessageContent.text = property(_get_text, _set_text)
