@@ -48,7 +48,7 @@ class CodeDebuggerAgent(Agent):
         yield await self._execute_code(task)
 
     async def _execute_code(self, task) -> ChatMessageContent:
-        # Normalize task content
+        # Normalize task input
         if isinstance(task, ChatMessageContent):
             task = task.content
         elif isinstance(task, list):
@@ -56,7 +56,7 @@ class CodeDebuggerAgent(Agent):
         elif not isinstance(task, str):
             task = str(task)
 
-        # Extract python code blocks
+        # Extract code blocks
         code_blocks = re.findall(r"```(?:python)?\n(.*?)```", task, re.DOTALL)
         if not code_blocks:
             return ChatMessageContent(
@@ -67,7 +67,6 @@ class CodeDebuggerAgent(Agent):
 
         code = code_blocks[0].strip()
 
-        # Execute code in isolated subprocess
         try:
             with tempfile.NamedTemporaryFile(mode="w+", suffix=".py", delete=False) as temp_file:
                 temp_file.write(code)
@@ -82,11 +81,10 @@ class CodeDebuggerAgent(Agent):
             )
 
             if result.returncode == 0:
-                output = result.stdout.strip()
-                if not output:
-                    output = "✅ Code executed successfully (no output)."
+                output = result.stdout.strip() or "✅ Code executed successfully (no output)."
             else:
                 output = f"⚠️ Error (exit code {result.returncode}):\n{result.stderr.strip()}"
+
         except subprocess.TimeoutExpired:
             output = "⏱️ Code execution timed out (20s limit)."
         except Exception as e:
@@ -105,7 +103,7 @@ class CodeDebuggerAgent(Agent):
 
 
 # ==============================
-# 🧩 AGENT DEFINITIONS
+# 🧩 DEFINE ALL AGENTS
 # ==============================
 async def agents() -> list[Agent]:
     base_service = AzureChatCompletion(
@@ -118,38 +116,32 @@ async def agents() -> list[Agent]:
     return [
         ChatCompletionAgent(
             name="ResearchAgent",
-            description="A helpful assistant with access to web search.",
-            instructions="You are a Researcher. You find information without computation or analysis.",
+            description="A helpful assistant that performs research tasks.",
+            instructions="You are a researcher. Gather data and information from context only.",
             service=base_service,
         ),
         ChatCompletionAgent(
             name="CoderAgent",
-            description="Writes and explains code to process and analyze data.",
-            instructions="You solve problems using Python code. Provide detailed explanations and comments.",
+            description="Writes and explains Python code.",
+            instructions="You generate correct, tested Python code with detailed explanations.",
             service=base_service,
         ),
         ChatCompletionAgent(
             name="DataAnalystAgent",
-            description="Performs statistical and data-driven analysis.",
-            instructions="You analyze datasets and extract insights.",
-            service=base_service,
-        ),
-        ChatCompletionAgent(
-            name="SustainabilityExpertAgent",
-            description="Estimates environmental impact like CO2 emissions.",
-            instructions="You estimate carbon and energy metrics based on compute usage.",
+            description="Performs statistical and financial analysis.",
+            instructions="Use data-driven reasoning and financial logic.",
             service=base_service,
         ),
         ChatCompletionAgent(
             name="PresentationAgent",
-            description="Formats results into tables and summaries.",
-            instructions="Present information using bullet points or tables.",
+            description="Formats outputs neatly for reports and slides.",
+            instructions="Format content in bullet points, tables, or clean summaries.",
             service=base_service,
         ),
         ChatCompletionAgent(
             name="CodeReviewerAgent",
-            description="Reviews code and ensures best practices.",
-            instructions="Review and fix bugs or inefficiencies in Python code.",
+            description="Reviews and fixes code.",
+            instructions="Detect errors, optimize code, and ensure clarity.",
             service=base_service,
         ),
         CodeDebuggerAgent(),
@@ -157,15 +149,16 @@ async def agents() -> list[Agent]:
 
 
 # ==============================
-# 🧠 CALLBACK
+# 🧩 FIXED CALLBACK FUNCTION
 # ==============================
 def agent_response_callback(message: ChatMessageContent) -> None:
+    """Called every time an agent produces a message."""
     agents_used.append(message.name)
-    print(f"\n**{message.name}**\n{message.content}\n")
+    print(f"\n🔹 Agent: {message.name}\n🗨️  Message:\n{message.content}\n")
 
 
 # ==============================
-# 🚀 MAIN ENTRY POINT
+# 🚀 MAIN EXECUTION
 # ==============================
 async def main():
     magentic_orchestration = MagenticOrchestration(
@@ -186,16 +179,17 @@ async def main():
 
     orchestration_result = await magentic_orchestration.invoke(
         task=(
-            "I am working for a large enterprise and I need to showcase Semantic Kernel orchestration. "
-            "Write a Python script that calculates the most financially valuable opportunities for the enterprise, "
-            "then run and debug it to verify correctness."
+            "You are a team of agents. CoderAgent should write Python code that calculates "
+            "the top 5 most financially valuable business opportunities based on profitability and market size. "
+            "Then CodeDebuggerAgent should execute it and return output. If errors occur, CodeReviewerAgent fixes them."
         ),
         runtime=runtime,
     )
 
+    # The orchestration result will be a ChatMessageContent object
     value = await orchestration_result.get()
-    print(f"\n***** Final Result *****\n{value}")
-    print("\nAgents involved:", agents_used)
+    print(f"\n***** ✅ FINAL RESULT *****\n{value.content}\n")
+    print("Agents involved:", ", ".join(agents_used))
 
     await runtime.stop_when_idle()
 
