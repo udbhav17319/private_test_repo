@@ -48,15 +48,16 @@ class CodeDebuggerAgent(Agent):
         yield await self._execute_code(task)
 
     async def _execute_code(self, task) -> ChatMessageContent:
+        """Extracts Python code blocks and executes them locally."""
         # Normalize task input
         if isinstance(task, ChatMessageContent):
-            task = getattr(task, "content", getattr(task, "message", str(task)))
+            task = task.content
         elif isinstance(task, list):
             task = " ".join(str(t) for t in task)
         elif not isinstance(task, str):
             task = str(task)
 
-        # Extract python code blocks
+        # Extract Python code block
         code_blocks = re.findall(r"```(?:python)?\n(.*?)```", task, re.DOTALL)
         if not code_blocks:
             return ChatMessageContent(
@@ -68,11 +69,13 @@ class CodeDebuggerAgent(Agent):
         code = code_blocks[0].strip()
 
         try:
+            # Write code to a temp file
             with tempfile.NamedTemporaryFile(mode="w+", suffix=".py", delete=False) as temp_file:
                 temp_file.write(code)
                 temp_file.flush()
                 temp_path = temp_file.name
 
+            # Execute locally
             result = subprocess.run(
                 [sys.executable, temp_path],
                 capture_output=True,
@@ -116,20 +119,20 @@ async def agents() -> list[Agent]:
     return [
         ChatCompletionAgent(
             name="ResearchAgent",
-            description="Finds information.",
-            instructions="You are a researcher that finds context-relevant data only.",
+            description="Finds information for analysis.",
+            instructions="You are a researcher; gather relevant data points and facts.",
             service=base_service,
         ),
         ChatCompletionAgent(
             name="CoderAgent",
             description="Writes and explains Python code.",
-            instructions="You generate working Python code with comments.",
+            instructions="Generate correct, working Python code with explanations.",
             service=base_service,
         ),
         ChatCompletionAgent(
             name="CodeReviewerAgent",
             description="Reviews and fixes code.",
-            instructions="Detect bugs, inefficiencies, and propose fixes.",
+            instructions="Detect bugs, inefficiencies, and improve code quality.",
             service=base_service,
         ),
         CodeDebuggerAgent(),
@@ -137,20 +140,23 @@ async def agents() -> list[Agent]:
 
 
 # ==============================
-# 🧩 UNIVERSAL CALLBACK (FIX)
+# 🧩 CLEAN CALLBACK FOR v1.37
 # ==============================
 def agent_response_callback(message: ChatMessageContent) -> None:
-    """Universal-safe callback for any SK version."""
-    agents_used.append(getattr(message, "name", "UnknownAgent"))
-    msg_content = getattr(message, "content", getattr(message, "message", ""))
-    print(f"\n🔹 Agent: {message.name}\n🗨️  Message:\n{msg_content}\n")
+    """Safely print agent responses (v1.37 style)."""
+    agent_name = getattr(message, "name", "UnknownAgent")
+    agent_content = getattr(message, "content", str(message))
+    agents_used.append(agent_name)
+
+    print(f"\n🔹 Agent: {agent_name}")
+    print(f"🗨️  Message:\n{agent_content}\n")
 
 
 # ==============================
 # 🚀 MAIN ORCHESTRATION
 # ==============================
 async def main():
-    magentic_orchestration = MagenticOrchestration(
+    orchestration = MagenticOrchestration(
         members=await agents(),
         manager=StandardMagenticManager(
             chat_completion_service=AzureChatCompletion(
@@ -166,20 +172,17 @@ async def main():
     runtime = InProcessRuntime()
     runtime.start()
 
-    orchestration_result = await magentic_orchestration.invoke(
+    result = await orchestration.invoke(
         task=(
-            "CoderAgent should write a Python script that calculates the most profitable opportunities "
-            "based on cost vs revenue. Then CodeDebuggerAgent should execute it and show results."
+            "CoderAgent should write Python code that calculates profitability ratios "
+            "and returns the top 3 opportunities by ROI. "
+            "Then CodeDebuggerAgent should execute it to verify results."
         ),
         runtime=runtime,
     )
 
-    value = await orchestration_result.get()
-
-    # Safe retrieval from orchestration result
-    final_output = getattr(value, "content", getattr(value, "message", str(value)))
-
-    print(f"\n***** ✅ FINAL RESULT *****\n{final_output}\n")
+    final_value = await result.get()
+    print(f"\n***** ✅ FINAL RESULT *****\n{final_value.content}\n")
     print("Agents involved:", ", ".join(agents_used))
 
     await runtime.stop_when_idle()
